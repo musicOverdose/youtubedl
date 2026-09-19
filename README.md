@@ -114,34 +114,34 @@ Caption: VIDEO TITLE ONLY
 ## 🏗️ System Architecture
 
 ```mermaid
-graph TD
-    User([Telegram User]) <-->|Commands & Callbacks| Bot[Bot Service (Aiogram 3)]
-    Admin([Administrator]) <-->|Web UI :8085| Web[Web Admin (FastAPI + SPA)]
-    
-    subgraph Storage & Queues
-        PG[(PostgreSQL 16)]
-        Redis[(Redis 7 AOF Queue)]
-        SecretsVol[Secrets Volume (/config/secrets)]
-        TempVol[Temp Storage (/tmp/ytdl)]
+flowchart TD
+    User(["Telegram User"]) <-->|"Commands & Callbacks"| Bot["Bot Service (aiogram 3)"]
+    Admin(["Administrator"]) <-->|"Web UI :8085"| Web["Web Admin (FastAPI + SPA)"]
+
+    subgraph Storage ["Storage & State"]
+        PG[("PostgreSQL 16")]
+        Redis[("Redis 7 (AOF Queue)")]
+        SecretsVol["Secrets Volume (/config/secrets)"]
+        TempVol["Temp Storage (/tmp/ytdl)"]
     end
-    
-    subgraph Processing Engine
-        Worker[Worker (yt-dlp + Deno + FFmpeg)]
+
+    subgraph Processing ["Processing Engine"]
+        Worker["Worker (yt-dlp + Deno + FFmpeg)"]
     end
-    
-    subgraph Telegram Infrastructure
-        CacheChannel[Private Telegram Cache Channel]
-        TelegramAPI[Telegram Bot API / Local Bot API]
+
+    subgraph Telegram ["Telegram Infrastructure"]
+        CacheChannel["Private Telegram Cache Channel"]
+        TelegramAPI["Telegram Bot API / Local API"]
     end
-    
+
     Bot <--> Redis
     Bot <--> PG
     Bot <--> TelegramAPI
-    
+
     Web <--> PG
     Web <--> Redis
     Web --> SecretsVol
-    
+
     Worker <--> Redis
     Worker <--> PG
     Worker <--> TempVol
