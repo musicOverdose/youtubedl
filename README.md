@@ -1,30 +1,61 @@
-# Telegram YouTube Downloader (Self-Hosted Production Stack)
+# 🚀 Telegram YouTube Downloader
 
-A production-ready, private, self-hosted Telegram bot and administration panel for downloading YouTube videos, MP3 audio, and subtitles (with AI-powered Persian translation).
+<div align="center">
 
-Designed specifically for Debian 13 VPS environments with **2 CPU cores, 4 GB RAM, and 80 GB HDD**.
+<img src="https://img.shields.io/badge/Made_by-Farzad_(@MusicOverdose)-indigo?style=for-the-badge" alt="Made by Farzad" />
+<img src="https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.13" />
+<img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Ready" />
+<img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+<img src="https://img.shields.io/badge/aiogram-3.x-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="aiogram 3" />
+<img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License" />
 
----
+<p align="center">
+  <b>A production-grade, self-hosted Telegram bot and administration web suite for downloading YouTube videos, MP3 audio, and subtitles with AI-powered Persian translation.</b>
+</p>
 
-## Key Highlights
-
-- **Quality-First Telegram UX**: Dynamic resolution discovery (2160p, 1440p, 1080p, 720p, 480p, 360p) based on actual YouTube source streams.
-- **Strict Exact Resolution**: Never silently downgrades or upgrades quality (`height == requested_height`).
-- **Two-Step Codec Selection**: Video resolution selected first, followed by clean `🎬 H.264 / AAC` or `📦 H.265 / AAC` selection.
-- **No Unnecessary Transcoding**: Probes source streams with `ffprobe` and prefers stream copying (`-c copy`) whenever the source already matches target codecs and MP4 container, preventing CPU spikes on 2-core VPS.
-- **Private Telegram Channel Media Cache**: All finished media is uploaded to a designated private Telegram cache channel. Exact cache hits bypass queue, worker, download, and disk entirely, delivering immediately via `copyMessage`.
-- **Zero Permanent Completed Media on VPS**: Files in `/tmp/ytdl/<job_id>` are automatically deleted after successful Telegram cache upload, failure, or cancellation.
-- **Authoritative Must-Join Channel Guard**: Strict server-side verification ensures users remain members of all configured required channels. If a user leaves, access is revoked immediately.
-- **Persistent Redis FIFO Queue**: Powered by Redis with Append-Only File (`appendonly yes`). Dynamic runtime concurrency control (`MAX_ACTIVE_JOBS`, default 1).
-- **Duplicate Job Coalescing**: Multiple users requesting the same uncached video share one underlying job and one queue position.
-- **Subtitles & AI Translation**: Supports English (auto or manual) and Persian (AI-translated English using any OpenAI-compatible API).
-- **Optional YouTube Cookies**: Upload or paste `cookies.txt` with Netscape format validation, atomic write, hot-reload, and zero credential leakage.
-- **Modern Web Administration Panel**: FastAPI + clean, responsive dashboard on port `8085` protected with Argon2id session authentication.
-- **Portainer Stack Ready**: 1-click deployment via Portainer Stack or standard Docker Compose.
+</div>
 
 ---
 
-## Production Architecture
+## 🌟 Key Features
+
+- **Quality-First Telegram UX**:
+  - Dynamically discovers actual available resolutions (`2160p`, `1440p`, `1080p`, `720p`, `480p`, `360p`) directly from YouTube source streams.
+  - Sends a clean photo preview with the **Video Title only** as the caption.
+  - Initial menu exposes source qualities, `🎵 MP3`, and `💬 Subtitle`.
+- **Strict Exact Resolution (No Downgrading)**:
+  - Enforces `height == requested_height`. If a selected resolution becomes unavailable, the request is safely rejected with guidance to select from current stream qualities. Never silently degrades resolution.
+- **Two-Step Codec Selection**:
+  - Resolution is selected first, then seamlessly switches to `🎬 H.264 / AAC`, `📦 H.265 / AAC`, and `⬅️ Back`.
+- **Intelligent Stream Copying (CPU Optimized)**:
+  - Inspects downloaded streams with `ffprobe` and prefers stream copying (`-c copy`) whenever the source already matches target codecs and MP4 container. Avoids CPU-intensive transcoding on lightweight host servers.
+- **Private Telegram Channel Media Cache**:
+  - Uses a designated private Telegram channel as persistent media storage.
+  - Exact cache hits bypass queues, workers, yt-dlp, and FFmpeg entirely, delivering files instantly via Telegram `copyMessage`.
+- **Zero Permanent Disk Waste**:
+  - Files are processed in `/tmp/ytdl/<job_id>` and automatically cleaned up immediately after verified Telegram cache upload, failure, or cancellation.
+- **Authoritative Must-Join Channel Guard**:
+  - Verifies that users are active members of all configured required channels before allowing URL intake, callbacks, or media delivery.
+  - If a user leaves a required channel at any point, access is revoked immediately.
+- **Persistent Redis FIFO Queue & Race-Safe Concurrency**:
+  - Queue state survives container restarts with Redis Append-Only File (`appendonly yes`).
+  - Concurrency limit (`MAX_ACTIVE_JOBS`, default 1) is enforced atomically via Redis Lua scripts to eliminate race conditions.
+  - Queue positions are derived dynamically based on waiting jobs ahead.
+- **Duplicate Job Coalescing**:
+  - Multiple users requesting the same uncached video bind to one underlying download job and share a single queue position.
+- **Subtitles & OpenAI-Compatible Translation**:
+  - Supports `🇬🇧 English` (auto-generated or manual) converted to clean SRT without AI.
+  - Supports `🇮🇷 Persian` translated from English SRT via any OpenAI-compatible API endpoint (OpenAI, OpenRouter, Groq, Ollama, etc.) with strict timestamp and sequence preservation.
+- **Optional YouTube Cookies**:
+  - Upload or paste Netscape format `cookies.txt` via Web Admin with format validation, atomic file replacement, hot-reload, and zero credential leakage.
+- **Full-Featured Web Administration Panel**:
+  - Modern, responsive SPA dashboard on port `8085` protected by Argon2id password hashing and secure HTTP-only session cookies.
+- **Portainer & Docker Compose Ready**:
+  - 1-click deployment via Portainer Stack or standard Docker Compose.
+
+---
+
+## 🏗️ Architecture
 
 ```mermaid
 graph TD
@@ -38,7 +69,7 @@ graph TD
         TempVol[Temp Storage (/tmp/ytdl)]
     end
     
-    subgraph Execution
+    subgraph Processing Pipeline
         Worker[Worker (yt-dlp + Deno + FFmpeg)]
     end
     
@@ -64,149 +95,136 @@ graph TD
 
 ---
 
-## Hardware Specifications & Resource Tuning
+## 💻 System Sizing & Resource Efficiency
 
-| Resource | Value | Notes |
+Designed to run smoothly even on modest cloud servers:
+
+| Resource | Recommended Baseline | Notes |
 |---|---|---|
-| **Operating System** | Debian 13 (Trixie) / Debian 12 | Linux kernel 6.x |
-| **CPU Cores** | 2 Cores | `MAX_ACTIVE_JOBS=1` default ensures smooth FFmpeg operations without host locking |
-| **Memory (RAM)** | 4 GB | Low memory footprint (<800MB total across all 5 containers) |
-| **Storage (HDD)** | 80 GB | Completed media stored on Telegram; `/tmp/ytdl` capped at 30 GB max |
+| **CPU** | 2 Cores | `MAX_ACTIVE_JOBS=1` default avoids high CPU load during FFmpeg transcoding |
+| **RAM** | 2 GB – 4 GB | Memory footprint across all 5 containers is typically under 800 MB |
+| **Disk** | 20 GB – 80 GB | Completed media is stored on Telegram; temp storage is bounded (`MAX_TEMP_STORAGE_GB=30`) |
+| **OS** | Linux (Debian, Ubuntu, AlmaLinux, Rocky) | Docker Engine 24+ & Docker Compose v2+ |
 
 ---
 
-## Deployment Guide (Portainer Stack)
+## 🚀 Quick Start & Deployment
 
-### Step 1: Create Telegram Bot with BotFather
-1. Open Telegram and search for `@BotFather`.
-2. Send `/newbot` and follow the instructions to choose a name and username.
-3. Save the generated **HTTP API Token** (`BOT_TOKEN`).
+### 1. Prerequisites
+1. **Telegram Bot Token**: Create a bot with [@BotFather](https://t.me/BotFather) and save the API token.
+2. **Private Cache Channel**: Create a private Telegram channel, add your bot, and grant it **Administrator** privileges (post, edit, delete messages). Note the numeric channel ID (e.g. `-1001234567890`).
+3. **Telegram API Credentials**: Obtain `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from [my.telegram.org](https://my.telegram.org).
 
-### Step 2: Create Private Telegram Cache Channel
-1. Create a new **Private Channel** in Telegram (e.g., `My Media Cache`).
-2. Add your newly created bot to the channel and promote it to **Administrator** (ensure permissions: Post Messages, Edit Messages, Delete Messages).
-3. Obtain the numeric channel ID (e.g. `-1001234567890`) using `@username_to_id_bot` or by forwarding a message from the channel to `@JsonDumpBot`.
+---
 
-### Step 3: Obtain Telegram API ID & Hash
-1. Log in to [https://my.telegram.org](https://my.telegram.org).
-2. Go to **API development tools** and create a new application.
-3. Note your `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+### Option A: Portainer Stack Deployment (Recommended)
 
-### Step 4: Deploy Stack via Portainer
-1. Open your Portainer Web UI on your Debian 13 VPS.
-2. Go to **Stacks** -> **Add stack**.
-3. Name your stack (e.g. `ytdl`).
-4. Select **Repository** (enter your GitHub repository URL) OR select **Web editor** and paste the contents of `docker-compose.yml`.
-5. Under **Environment variables**, populate the required values from `.env.example`:
+1. Open your Portainer Web UI.
+2. Navigate to **Stacks** -> **Add stack**.
+3. Choose **Repository** and provide:
+   - **Repository URL**: `https://github.com/musicOverdose/youtubedl.git`
+   - **Repository reference**: `refs/heads/main`
+   - **Compose path**: `docker-compose.yml`
+4. Under **Environment variables**, set the required values:
    ```env
-   BOT_TOKEN=your_bot_token_here
-   TELEGRAM_API_ID=your_api_id
-   TELEGRAM_API_HASH=your_api_hash
+   BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
+   TELEGRAM_API_ID=1234567
+   TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
    TELEGRAM_CACHE_CHANNEL_ID=-1001234567890
    WEB_PORT=8085
    ADMIN_USERNAME=admin
-   ADMIN_PASSWORD=ChangeThisStrongPassword123!
+   ADMIN_PASSWORD=ChangeThisSecurePassword123!
    SECRET_KEY=generate_a_random_64_character_string_for_sessions
    MAX_ACTIVE_JOBS=1
    MAX_VIDEO_DURATION_SECONDS=7200
    ```
-6. Click **Deploy the stack**.
-7. Portainer will pull the base images, build the application containers, and initialize the stack.
+5. Click **Deploy the stack**.
 
 ---
 
-## Command-Line Deployment (Docker Compose)
+### Option B: Docker Compose CLI Deployment
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/yourusername/youtubedl.git /opt/youtubedl
+# 1. Clone repository
+git clone https://github.com/musicOverdose/youtubedl.git /opt/youtubedl
 cd /opt/youtubedl
 
 # 2. Configure environment
 cp .env.example .env
 nano .env
 
-# 3. Start the stack
+# 3. Start services
 docker compose up -d --build
 
-# 4. View logs
+# 4. Check status & logs
+docker compose ps
 docker compose logs -f
 ```
 
 ---
 
-## Web Administration Walkthrough (`http://your-vps-ip:8085`)
+## 🎛️ Web Administration Panel (`:8085`)
 
-Open your browser and navigate to `http://<your-vps-ip>:8085`.
-Log in with your configured `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+Access the management panel at `http://<your-server-ip>:8085`.
 
-### 1. Dashboard
-Displays live CPU %, RAM usage, Disk usage, temporary storage directory size, active job counters, queue lengths, cache hit ratios, and stack component versions (`yt-dlp`, `yt-dlp-ejs`, `FFmpeg`, `Deno`, `Python`).
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ⚡ YTDL Admin Panel                                         │
+├───────────────┬─────────────────────────────────────────────┤
+│ 📊 Dashboard  │ CPU: 12% | RAM: 1.2/4GB | Disk: 24/80GB    │
+│ ⏳ Queue      │ Active: 1/1 | Waiting: 2 | Status: Normal   │
+│ 📁 Jobs       │ Total: 342 | Success: 338 | Failed: 4       │
+│ ⚡ Cache      │ Stored: 280 items | Hit Rate: 78.4%         │
+│ 👥 Users      │ Active: 154 users | Banned: 1               │
+│ 🔒 Must Join  │ Enabled: Yes | Required Channels: 2         │
+│ 📺 YouTube    │ Default Max: 1080p | Playlists: Disabled    │
+│ 🍪 Cookies    │ Configured: Yes | Netscape Validated        │
+│ 🤖 AI Trans   │ Provider: OpenAI-compatible (gpt-4o-mini)   │
+│ ⚙️ Settings   │ Max Duration: 02:00:00 | Safety Limits      │
+│ 🖥️ System     │ Health: OK | PostgreSQL: OK | Redis: OK     │
+│ 📝 Logs       │ Real-time structured system & worker logs   │
+│ 🛡️ Audit Log  │ Security audit trail of admin actions       │
+└───────────────┴─────────────────────────────────────────────┘
+```
 
-### 2. Queue & Concurrency
-- View active processing jobs with real-time percentage, speed, and ETA.
-- View waiting jobs in strict FIFO order with dynamically derived queue positions (`#1`, `#2`, etc.).
-- **Pause Queue**: Pauses dispatch of new jobs while allowing in-flight jobs to finish.
-- **Resume Queue**: Resumes automated processing.
-- **Dynamic Concurrency**: Change `MAX_ACTIVE_JOBS` (1, 2, 3...) at runtime without container restarts.
-
-### 3. Must-Join Channel System
-- Toggle the Must-Join requirement ON or OFF.
-- Add required channels by Chat ID, Title, and Username or Invite Link.
-- Authoritatively tests that the bot is an Administrator in the channel before allowing it to be enabled.
-
-### 4. YouTube Cookies
-- **Upload cookies.txt** or **Paste cookies.txt** directly into the secure textarea.
-- Format validator ensures standard Netscape 7-field compliance.
-- Atomically replaces active cookie file with zero downtime.
-- **Test Cookies**: Run safe metadata extraction against a YouTube URL without downloading media.
-- Cookie content is never exposed via web APIs, logs, or Telegram.
-
-### 5. AI Subtitle Translation
-- Toggle Persian AI Translation ON or OFF.
-- Configure any OpenAI-compatible API endpoint (OpenAI, OpenRouter, Groq, Ollama, etc.).
-- API keys are masked in the UI.
-- Test connection and SRT preservation with 1-click test button.
-
-### 6. Settings
-- Max video duration (default 7200s = 02:00:00). Videos exceeding this limit are rejected before queueing.
-- Allow unknown duration toggle.
-- Cache hit duration limit bypass toggle.
-- Per-user concurrent and queued limits.
+### Highlights:
+- **Queue Controls**: Pause/Resume the global queue, adjust `MAX_ACTIVE_JOBS` on-the-fly without container restarts, and cancel or retry tasks.
+- **Must-Join Management**: Add channels via Chat ID/Username/Invite Link; automatically verifies the bot is an Administrator before enabling.
+- **Cookie Tool**: Paste or upload `cookies.txt`, test extraction against a URL, and delete without leaking secrets.
+- **AI Configuration**: Test OpenAI-compatible subtitle translation and verify SRT timestamp integrity with 1-click test tool.
 
 ---
 
-## VPS Backup Strategy
+## 💾 Backup Recommendations
 
-| Component | Backup Needed? | Notes |
+| Target | Backup Required? | Notes |
 |---|---|---|
-| **PostgreSQL Database** | **YES** | Contains user history, cache keys, channel configurations, and audit logs. |
-| **Settings & Secrets** | **YES** | Contains `.env`, cookies, and application configuration. |
-| **Completed Media Files** | **NO** | Completed media is stored permanently inside the private Telegram cache channel. |
+| **PostgreSQL** | **YES** | Contains user records, channel rules, cache keys, and audit logs |
+| **Configuration** | **YES** | `.env`, cookies, and application settings |
+| **Media Files** | **NO** | Completed media is permanently preserved in the private Telegram cache channel |
 
-### Automated Database Backup Script (Cron)
+### Database Backup Example (Cron)
 ```bash
-# Add to crontab on your Debian VPS:
 0 3 * * * docker exec ytdl_postgres pg_dump -U ytdl_user ytdl_db | gzip > /backups/ytdl_db_$(date +\%F).sql.gz
 ```
 
 ---
 
-## Running Automated Tests
+## 🧪 Automated Testing
 
-A comprehensive test suite of 27 unit and integration tests is included.
+The project includes a 27-test automated test suite:
 
 ```bash
-# Run tests inside virtualenv:
-.venv/bin/pytest -v
+# Run tests inside python environment:
+pytest -v
 ```
 
-Tests cover:
-- URL normalization and validation
-- Dynamic quality detection and descending sorting
-- Strict exact-quality enforcement (no fallback)
+### Coverage:
+- URL extraction and canonicalization
+- Dynamic quality extraction, sorting, and deduplication
+- Exact quality enforcement (no fallback)
 - Stream-copy vs transcode decision logic
-- Subtitle extraction and SRT parsing/validation
+- Subtitle extraction, SRT parsing, and validation
 - Deterministic cache key generation and invalidation
 - Redis FIFO queue ordering, derived position calculation, and atomic concurrency limits
 - Must-Join multi-channel enforcement, membership state transitions, and rejoin delivery
@@ -215,5 +233,6 @@ Tests cover:
 
 ---
 
-## License
-MIT License. Built for private, self-hosted deployment.
+## 📄 License
+
+This project is licensed under the MIT License.
