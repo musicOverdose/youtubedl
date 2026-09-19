@@ -229,7 +229,7 @@ Access the dashboard at `http://<your-server-ip>:8085`.
 │ 📊 Dashboard  │ Live CPU, RAM, Disk, Active & Queued counts │
 │ ⏳ Queue      │ Live progress bars, speed, ETA, Pause/Resume│
 │ 📁 Jobs       │ Filterable job history, retry & cancel      │
-│ ⚡ Cache      │ Inspect cached items, hit stats, delete     │
+│ ⚡ Cache       │ Inspect cached items, hit stats, delete     │
 │ 👥 Users      │ User list, job statistics, ban/unban        │
 │ 🔒 Must Join  │ Enforce channel membership, bot status test │
 │ 📺 YouTube    │ Default resolutions, playlist limits        │
