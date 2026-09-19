@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telegram YouTube Downloader - Admin Panel</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span>⚡ YTDL Admin</span>
+    </div>
+    <ul class="nav-links">
+      <li class="nav-item active" data-section="dashboard">📊 Dashboard</li>
+      <li class="nav-item" data-section="queue">⏳ Queue</li>
+      <li class="nav-item" data-section="jobs">📁 Jobs</li>
+      <li class="nav-item" data-section="cache">⚡ Cache</li>
+      <li class="nav-item" data-section="users">👥 Users</li>
+      <li class="nav-item" data-section="must-join">🔒 Must Join</li>
+      <li class="nav-item" data-section="youtube">📺 YouTube</li>
+      <li class="nav-item" data-section="cookies">🍪 Cookies</li>
+      <li class="nav-item" data-section="ai">🤖 AI Translation</li>
+      <li class="nav-item" data-section="settings">⚙️ Settings</li>
+      <li class="nav-item" data-section="system">🖥️ System</li>
+      <li class="nav-item" data-section="logs">📝 Logs</li>
+      <li class="nav-item" data-section="audit">🛡️ Audit Log</li>
+    </ul>
+    <div class="sidebar-footer">
+      <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:8px;">
+        Logged in: <b id="admin-username-display" style="color:var(--text-primary);">admin</b>
+      </div>
+      <button class="btn btn-secondary" id="btn-logout" style="width:100%;">Logout</button>
+    </div>
+  </aside>
+
+  <!-- Main Content Wrapper -->
+  <div class="main-wrapper">
+    <header class="top-bar">
+      <h2 id="page-title">Management Dashboard</h2>
+      <div style="display:flex; align-items:center; gap:15px;">
+        <span class="badge badge-success">VPS Optimized (2 Cores / 4GB)</span>
+      </div>
+    </header>
+
+    <main class="content-body">
+
+      <!-- 1. DASHBOARD -->
+      <section id="sec-dashboard" class="section active">
+        <div class="grid-4">
+          <div class="card">
+            <div class="card-title">CPU Usage</div>
+            <div class="card-val" id="stat-cpu">0%</div>
+          </div>
+          <div class="card">
+            <div class="card-title">RAM Usage</div>
+            <div class="card-val" id="stat-ram">0 / 4 GB</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Disk Storage</div>
+            <div class="card-val" id="stat-disk">0 / 80 GB</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Temporary Storage</div>
+            <div class="card-val" id="stat-temp">0 GB</div>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <div class="card">
+            <div class="card-title">Active Jobs</div>
+            <div class="card-val" id="stat-active-jobs">0 / 1</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Queue Length</div>
+            <div class="card-val" id="stat-queue-len">0</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Cache Entries</div>
+            <div class="card-val" id="stat-cache-entries">0</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Cache Hit Rate</div>
+            <div class="card-val" id="stat-cache-hitrate">0%</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Operational Status</h3>
+            <p style="margin-bottom:8px;">Max Video Duration: <b id="stat-max-dur">02:00:00</b></p>
+            <p style="margin-bottom:8px;">AI Translation: <b id="stat-ai-status">OFF</b></p>
+            <p style="margin-bottom:8px;">YouTube Cookies: <b id="stat-cookie-status">OFF</b></p>
+            <p style="margin-bottom:8px;">Must Join Channel: <b id="stat-mj-status">OFF</b></p>
+            <p style="margin-bottom:8px;">Completed Jobs: <b id="stat-completed">0</b> | Failed Jobs: <b id="stat-failed">0</b></p>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Component Stack Versions</h3>
+            <p style="margin-bottom:8px;">Application: <b id="v-app">1.0.0</b></p>
+            <p style="margin-bottom:8px;">Python: <b id="v-py">-</b></p>
+            <p style="margin-bottom:8px;">yt-dlp: <b id="v-ytdlp">-</b></p>
+            <p style="margin-bottom:8px;">yt-dlp-ejs: <b id="v-ejs">-</b></p>
+            <p style="margin-bottom:8px;">FFmpeg: <b id="v-ffmpeg">-</b></p>
+            <p style="margin-bottom:8px;">Deno JS Runtime: <b id="v-deno">-</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. QUEUE -->
+      <section id="sec-queue" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+          <h3>Active & Queued Media Jobs</h3>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button class="btn btn-warning" id="btn-queue-pause" onclick="toggleQueuePause()">⏸ Pause Queue</button>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <label style="margin:0;">Max Concurrency:</label>
+              <input type="number" id="queue-max-active-input" min="1" max="8" style="width:70px; padding:6px 10px;">
+              <button class="btn btn-primary" onclick="updateConcurrency()">Save</button>
+            </div>
+          </div>
+        </div>
+
+        <h4 style="color:var(--text-secondary); margin-top:20px;">ACTIVE PROCESSING JOBS</h4>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Title</th>
+                <th>Operation</th>
+                <th>Stage</th>
+                <th>Progress & Speed</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-active-jobs"></tbody>
+          </table>
+        </div>
+
+        <h4 style="color:var(--text-secondary); margin-top:25px;">WAITING IN QUEUE (FIFO)</h4>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Position</th>
+                <th>Job ID</th>
+                <th>Title</th>
+                <th>Operation</th>
+                <th>Queued At</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-queued-jobs"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 3. JOBS -->
+      <section id="sec-jobs" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+          <h3>Job History</h3>
+          <div style="display:flex; gap:10px;">
+            <input type="text" id="jobs-search" placeholder="Search title or ID..." onkeyup="loadJobs()" style="width:250px;">
+            <select id="jobs-filter-status" onchange="loadJobs()" style="width:150px;">
+              <option value="">All Statuses</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="FAILED">Failed</option>
+              <option value="CANCELLED">Cancelled</option>
+              <option value="QUEUED">Queued</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Title</th>
+                <th>Format</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Completed</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-jobs"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 4. CACHE -->
+      <section id="sec-cache" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+          <h3>Private Telegram Channel Media Cache</h3>
+          <input type="text" id="cache-search" placeholder="Search title or ID..." onkeyup="loadCache()" style="width:280px;">
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Source ID</th>
+                <th>Title</th>
+                <th>Format</th>
+                <th>Hit Count</th>
+                <th>File Size</th>
+                <th>Cache Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-cache"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 5. USERS -->
+      <section id="sec-users" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+          <h3>Telegram Users Management</h3>
+          <input type="text" id="users-search" placeholder="Search username or ID..." onkeyup="loadUsers()" style="width:250px;">
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Telegram ID</th>
+                <th>User</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Total Jobs</th>
+                <th>Last Active</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-users"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 6. MUST JOIN -->
+      <section id="sec-must-join" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+          <h3>Must-Join Channel Enforcement</h3>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-secondary" id="btn-mj-toggle" onclick="toggleMustJoin()">Must Join: OFF</button>
+            <button class="btn btn-primary" onclick="document.getElementById('modal-add-channel').classList.add('active')">+ Add Channel</button>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Chat ID</th>
+                <th>Title</th>
+                <th>Username / Invite</th>
+                <th>Bot Admin Status</th>
+                <th>Enabled</th>
+                <th>Last Verified</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-must-join"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 7. YOUTUBE SETTINGS -->
+      <section id="sec-youtube" class="section">
+        <div class="card" style="max-width:600px;">
+          <h3 style="margin-bottom:20px;">YouTube General Settings</h3>
+          <div class="form-group">
+            <label>Default Maximum Source Resolution:</label>
+            <select id="yt-max-height">
+              <option value="2160">2160p (4K)</option>
+              <option value="1440">1440p (2K)</option>
+              <option value="1080" selected>1080p (Full HD)</option>
+              <option value="720">720p (HD)</option>
+              <option value="480">480p</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="yt-playlists-toggle"> Allow YouTube Playlists (Disabled by default to prevent queue flood)</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="yt-h264-toggle" checked> H.264 / AAC Codec Enabled</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="yt-h265-toggle" checked> H.265 / AAC Codec Enabled</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="yt-mp3-toggle" checked> MP3 Audio Downloads Enabled</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="yt-subs-toggle" checked> Subtitle Extraction Enabled</label>
+          </div>
+          <button class="btn btn-primary" onclick="saveGlobalSettings(event)">Save YouTube Settings</button>
+        </div>
+      </section>
+
+      <!-- 8. COOKIES -->
+      <section id="sec-cookies" class="section">
+        <div class="grid-2">
+          <div class="card">
+            <h3 style="margin-bottom:15px;">YouTube Cookies Status</h3>
+            <p style="margin-bottom:10px;">Status: <b id="cookie-configured-val">Not Configured</b></p>
+            <p style="margin-bottom:10px;">Parsed Valid Cookies: <b id="cookie-count-val">0</b></p>
+            <p style="margin-bottom:15px;">Last Updated: <b id="cookie-updated-val">Never</b></p>
+
+            <div style="display:flex; gap:10px; margin-top:20px;">
+              <button class="btn btn-secondary" id="btn-cookie-toggle" onclick="toggleCookies()">YouTube Cookies: OFF</button>
+              <button class="btn btn-primary" onclick="testCookiesSubmit()">Test Cookies</button>
+              <button class="btn btn-danger" onclick="deleteCookiesFile()">Delete</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Paste cookies.txt Content</h3>
+            <form onsubmit="pasteCookiesSubmit(event)">
+              <div class="form-group">
+                <textarea id="cookie-paste-area" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;1780000000&#9;VISITOR_INFO1_LIVE&#9;..."></textarea>
+              </div>
+              <button type="submit" class="btn btn-primary">Validate & Save Cookies</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. AI TRANSLATION -->
+      <section id="sec-ai" class="section">
+        <div class="card" style="max-width:650px;">
+          <h3 style="margin-bottom:20px;">AI Subtitle Translation Settings</h3>
+          <form onsubmit="saveAISettings(event)">
+            <div class="form-group">
+              <label><input type="checkbox" id="ai-enabled-toggle"> Enable Persian AI Subtitle Translation</label>
+            </div>
+            <div class="form-group">
+              <label>API Provider:</label>
+              <input type="text" id="ai-provider" value="openai">
+            </div>
+            <div class="form-group">
+              <label>API Base URL (OpenAI-compatible):</label>
+              <input type="text" id="ai-base-url" value="https://api.openai.com/v1">
+            </div>
+            <div class="form-group">
+              <label>Model Name:</label>
+              <input type="text" id="ai-model" value="gpt-4o-mini">
+            </div>
+            <div class="form-group">
+              <label>API Key (Leave empty to keep existing):</label>
+              <input type="password" id="ai-api-key-input" placeholder="sk-...">
+              <small style="color:var(--text-secondary);">Currently Configured: <span id="ai-api-key-display">None</span></small>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+              <button type="submit" class="btn btn-primary">Save Settings</button>
+              <button type="button" class="btn btn-secondary" onclick="testAI()">Test AI Connection</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- 10. SETTINGS -->
+      <section id="sec-settings" class="section">
+        <div class="card" style="max-width:650px;">
+          <h3 style="margin-bottom:20px;">Global Application Settings</h3>
+          <form onsubmit="saveGlobalSettings(event)">
+            <div class="form-group">
+              <label>Maximum Video Duration (seconds):</label>
+              <input type="number" id="set-max-dur" value="7200">
+              <small style="color:var(--text-secondary);">7200 seconds = 02:00:00 (2 hours)</small>
+            </div>
+            <div class="form-group">
+              <label><input type="checkbox" id="set-allow-unknown"> Allow Unknown Duration</label>
+            </div>
+            <div class="form-group">
+              <label><input type="checkbox" id="set-cache-bypass" checked> Cache Hit Bypasses Duration Limit</label>
+            </div>
+            <div class="form-group">
+              <label>Max Concurrent Processing Jobs Per User:</label>
+              <input type="number" id="set-max-per-user" value="1" min="1" max="5">
+            </div>
+            <div class="form-group">
+              <label>Max Queued Jobs Per User:</label>
+              <input type="number" id="set-max-queued" value="5" min="1" max="20">
+            </div>
+            <div class="form-group">
+              <label>Max Temporary Storage Limit (GB):</label>
+              <input type="number" id="set-max-temp" value="30" min="5" max="70">
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top:10px;">Save Global Settings</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- 11. SYSTEM -->
+      <section id="sec-system" class="section">
+        <div class="grid-2">
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Service Readiness & Health</h3>
+            <p style="margin-bottom:10px;">Application Health: <b style="color:var(--success);">HEALTHY 🟢</b></p>
+            <p style="margin-bottom:10px;">PostgreSQL Database: <b id="sys-ready-db">-</b></p>
+            <p style="margin-bottom:10px;">Redis Queue & Locks: <b id="sys-ready-redis">-</b></p>
+          </div>
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Raw Metrics</h3>
+            <p style="color:var(--text-secondary); margin-bottom:15px;">Prometheus endpoint available at <code>/metrics</code></p>
+            <a href="/metrics" target="_blank" class="btn btn-secondary">View /metrics</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- 12. LOGS -->
+      <section id="sec-logs" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+          <h3>Structured System Logs</h3>
+          <button class="btn btn-secondary" onclick="loadLogs()">Refresh</button>
+        </div>
+        <div class="card" style="background:#000; padding:15px; border-radius:var(--radius); font-family:monospace; font-size:0.85rem; max-height:500px; overflow-y:auto; white-space:pre-wrap;" id="log-display">
+          Loading logs...
+        </div>
+      </section>
+
+      <!-- 13. AUDIT LOG -->
+      <section id="sec-audit" class="section">
+        <h3 style="margin-bottom:15px;">Security & Administrative Audit Trail</h3>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Action</th>
+                <th>Admin</th>
+                <th>Details</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-audit"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Login Modal -->
+  <div id="login-modal" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom:15px; color:var(--accent);">Admin Authentication Required</h3>
+      <div id="login-error" style="color:var(--danger); display:none; margin-bottom:10px; font-size:0.85rem;"></div>
+      <form id="login-form">
+        <div class="form-group">
+          <label>Username:</label>
+          <input type="text" id="login-username" value="admin" required>
+        </div>
+        <div class="form-group">
+          <label>Password:</label>
+          <input type="password" id="login-password" placeholder="Enter admin password" required>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%; margin-top:10px;">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Add Required Channel Modal -->
+  <div id="modal-add-channel" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom:15px;">Add Required Channel</h3>
+      <form onsubmit="addChannelModalSubmit(event)">
+        <div class="form-group">
+          <label>Channel Title:</label>
+          <input type="text" id="mj-title" placeholder="My Channel" required>
+        </div>
+        <div class="form-group">
+          <label>Channel Numeric Chat ID (e.g. -1001234567890):</label>
+          <input type="number" id="mj-chat-id" placeholder="-1001234567890" required>
+        </div>
+        <div class="form-group">
+          <label>Public Username (without @, optional):</label>
+          <input type="text" id="mj-username" placeholder="mychannel">
+        </div>
+        <div class="form-group">
+          <label>Invite Link (required for private channels):</label>
+          <input type="text" id="mj-invite" placeholder="https://t.me/+AbCdEfGhIj">
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-add-channel').classList.remove('active')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Channel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

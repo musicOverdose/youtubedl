@@ -1,0 +1,83 @@
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from src.core.config import settings
+from src.core.database import Base, engine
+from src.core.logger import setup_logger
+from src.core.security import hash_password
+from src.web.routes.ai_routes import router as ai_router
+from src.web.routes.audit_routes import router as audit_router
+from src.web.routes.auth_routes import router as auth_router
+from src.web.routes.cache_routes import router as cache_router
+from src.web.routes.cookies_routes import router as cookies_router
+from src.web.routes.dashboard_routes import router as dashboard_router
+from src.web.routes.job_routes import router as job_router
+from src.web.routes.logs_routes import router as logs_router
+from src.web.routes.must_join_routes import router as must_join_router
+from src.web.routes.queue_routes import router as queue_router
+from src.web.routes.settings_routes import router as settings_router
+from src.web.routes.system_routes import router as system_router
+from src.web.routes.user_routes import router as user_router
+
+logger = setup_logger("web_app")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing database schema if needed...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # If ADMIN_PASSWORD is set and no hash, compute default hash
+    if settings.ADMIN_PASSWORD and not settings.ADMIN_PASSWORD_HASH:
+        settings.ADMIN_PASSWORD_HASH = hash_password(settings.ADMIN_PASSWORD)
+        logger.info(f"Initialized admin credentials for '{settings.ADMIN_USERNAME}'")
+
+    yield
+    logger.info("Shutting down web application...")
+
+
+app = FastAPI(
+    title="Telegram YouTube Downloader Web Admin",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register routers
+app.include_router(system_router)
+app.include_router(auth_router)
+app.include_router(dashboard_router)
+app.include_router(queue_router)
+app.include_router(job_router)
+app.include_router(cache_router)
+app.include_router(user_router)
+app.include_router(must_join_router)
+app.include_router(cookies_router)
+app.include_router(ai_router)
+app.include_router(settings_router)
+app.include_router(logs_router)
+app.include_router(audit_router)
+
+# Mount static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.get("/")
+async def serve_index():
+    index_file = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {"status": "ok", "message": "Admin API is running. Access /docs for Swagger UI."}

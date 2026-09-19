@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ytdl_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ytdl_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ytdl_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-ytdl_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ytdl_user} -d ${POSTGRES_DB:-ytdl_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ytdl_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ytdl_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ytdl_network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    container_name: ytdl_web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8085}:8085"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - WEB_PORT=${WEB_PORT:-8085}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://ytdl_user:ytdl_secure_pass@postgres:5432/ytdl_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - config_data:/config/secrets
+    networks:
+      - ytdl_network
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: bot
+    container_name: ytdl_bot
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://ytdl_user:ytdl_secure_pass@postgres:5432/ytdl_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      - ytdl_network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: ytdl_worker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://ytdl_user:ytdl_secure_pass@postgres:5432/ytdl_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - temp_data:/tmp/ytdl
+      - config_data:/config/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ytdl_network
+
+networks:
+  ytdl_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  temp_data:
+  config_data:
