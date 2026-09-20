@@ -293,3 +293,39 @@ def write_restart_trigger() -> None:
         mode=0o640,
         group=101,
     )
+
+
+def remove_runtime_ready() -> None:
+    """
+    Remove /config/state/READY file to signal unreadiness.
+    """
+    try:
+        p = Path(settings.RUNTIME_READY_FILE)
+        if p.is_file():
+            p.unlink()
+            logger.info("Unlinked %s (system unreadiness signaled)", settings.RUNTIME_READY_FILE)
+    except Exception as e:
+        logger.warning("Could not remove %s: %s", settings.RUNTIME_READY_FILE, e)
+
+
+def verify_runtime_artifacts(mode: str = "cloud") -> bool:
+    """
+    Verify required runtime artifacts exist, have non-zero size, and proper permissions.
+    """
+    try:
+        bot_token_file = Path(settings.RUNTIME_BOT_TOKEN_FILE)
+        if not bot_token_file.is_file() or bot_token_file.stat().st_size == 0:
+            logger.warning("Runtime bot token file %s missing or empty", bot_token_file)
+            return False
+
+        if mode == "local":
+            env_file = Path(settings.LOCAL_BOT_API_ENV_FILE)
+            if not env_file.is_file() or env_file.stat().st_size == 0:
+                logger.warning("Local Bot API env file %s missing or empty", env_file)
+                return False
+
+        return True
+    except Exception as e:
+        logger.error("Error verifying runtime artifacts: %s", e)
+        return False
+

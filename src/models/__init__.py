@@ -6,6 +6,7 @@ from src.models.cache import CacheEntry
 from src.models.channel import RequiredChannel
 from src.models.setting import Setting
 from src.models.audit import AuditLog
+from src.models.telegram_migration import TelegramMigration
 
 __all__ = [
     "Base",
@@ -16,4 +17,5 @@ __all__ = [
     "RequiredChannel",
     "Setting",
     "AuditLog",
+    "TelegramMigration",
 ]

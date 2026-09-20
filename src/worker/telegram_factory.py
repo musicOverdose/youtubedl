@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -15,39 +15,38 @@ logger = get_logger("telegram_factory")
 
 class TelegramClientFactory:
     @staticmethod
-    async def get_client() -> Tuple[Bot, str]:
+    async def get_client(mode: Optional[str] = None) -> Tuple[Bot, str]:
         """
         Creates a Bot instance dynamically according to runtime configuration.
         Worker MUST NEVER decrypt credentials directly from PostgreSQL.
-        Reads token exclusively from /config/runtime/bot-token (or settings.BOT_TOKEN fallback).
-        Reads mode exclusively from Redis cache (or settings.TELEGRAM_API_MODE fallback).
+        Reads token exclusively from /config/runtime/bot-token. Zero fallback to .env credentials.
         """
         token_path = Path(settings.RUNTIME_BOT_TOKEN_FILE)
-        if token_path.is_file():
-            token = token_path.read_text(encoding="utf-8").strip()
-        else:
-            token = settings.BOT_TOKEN
-
+        if not token_path.is_file():
+            raise RuntimeError(
+                f"Bot token not available: file {settings.RUNTIME_BOT_TOKEN_FILE} does not exist."
+            )
+        token = token_path.read_text(encoding="utf-8").strip()
         if not token:
             raise RuntimeError(
-                f"Bot token not available at {settings.RUNTIME_BOT_TOKEN_FILE} or in environment."
+                f"Bot token in {settings.RUNTIME_BOT_TOKEN_FILE} is empty."
             )
 
-        mode = "local"
-        try:
-            r = get_redis_client()
-            cached_mode = await r.get("telegram:active:mode")
-            if cached_mode:
-                mode = (
-                    cached_mode.decode("utf-8")
-                    if isinstance(cached_mode, bytes)
-                    else str(cached_mode)
-                )
-            else:
-                mode = settings.TELEGRAM_API_MODE or "local"
-        except Exception as e:
-            logger.debug("Could not read telegram mode from Redis: %s", e)
-            mode = settings.TELEGRAM_API_MODE or "local"
+        if not mode:
+            try:
+                r = get_redis_client()
+                cached_mode = await r.get("telegram:active:mode")
+                if cached_mode:
+                    mode = (
+                        cached_mode.decode("utf-8")
+                        if isinstance(cached_mode, bytes)
+                        else str(cached_mode)
+                    )
+                else:
+                    mode = "local"
+            except Exception as e:
+                logger.debug("Could not read telegram mode from Redis: %s", e)
+                mode = "local"
 
         if mode == "local":
             base_url = settings.TELEGRAM_API_BASE_URL

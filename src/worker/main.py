@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import signal
 from src.core.config import settings
 from src.core.database import AsyncSessionLocal
@@ -45,6 +46,13 @@ async def worker_loop():
     try:
         while running:
             try:
+                # Gating: if READY flag is absent, pause job acquisition
+                ready_file = Path(settings.RUNTIME_READY_FILE)
+                if not ready_file.is_file():
+                    logger.debug("System not READY for Telegram processing (%s missing). Pausing job acquisition...", ready_file)
+                    await asyncio.sleep(1.0)
+                    continue
+
                 # Atomically attempt to acquire the next job slot
                 job_id = await QueueService.acquire_next_job(settings.MAX_ACTIVE_JOBS)
 

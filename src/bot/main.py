@@ -1,12 +1,13 @@
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
+from sqlalchemy import select
 
 from src.bot.handlers.audio_handler import audio_router
 from src.bot.handlers.base import base_router
@@ -17,8 +18,10 @@ from src.bot.handlers.queue_handler import queue_router
 from src.bot.handlers.subtitle_handler import subtitle_router
 from src.bot.handlers.url_handler import url_router
 from src.core.config import settings
+from src.core.database import AsyncSessionLocal
 from src.core.logger import setup_logger
 from src.core.redis import get_redis_client
+from src.models.setting import Setting
 
 logger = setup_logger("bot_main")
 
@@ -35,6 +38,10 @@ def setup_handlers(dp: Dispatcher) -> None:
 
 
 def read_runtime_token() -> Optional[str]:
+    """
+    Read bot token strictly from /config/runtime/bot-token.
+    Zero fallback to settings.BOT_TOKEN or .env credentials.
+    """
     token_path = Path(settings.RUNTIME_BOT_TOKEN_FILE)
     if token_path.is_file():
         try:
@@ -43,70 +50,137 @@ def read_runtime_token() -> Optional[str]:
                 return token
         except Exception as e:
             logger.warning("Failed to read %s: %s", token_path, e)
-    return settings.BOT_TOKEN if settings.BOT_TOKEN else None
+    return None
 
 
-async def read_runtime_mode() -> str:
+async def read_authoritative_config() -> Tuple[str, str]:
+    """
+    Read mode and version directly from PostgreSQL (authoritative source).
+    Falls back to Redis derived cache if PostgreSQL is temporarily unavailable.
+    """
     try:
-        r = get_redis_client()
-        m = await r.get("telegram:active:mode")
-        if m:
-            return m.decode("utf-8") if isinstance(m, bytes) else str(m)
+        async with AsyncSessionLocal() as session:
+            stmt = select(Setting).where(Setting.status == "ACTIVE")
+            res = await session.execute(stmt)
+            items = {s.key: s.value for s in res.scalars().all()}
+            mode = items.get("telegram_api_mode") or "local"
+            version = items.get("telegram_config_version") or "1"
+            return mode, version
     except Exception as e:
-        logger.debug("Failed reading mode from Redis: %s", e)
-    return settings.TELEGRAM_API_MODE or "local"
+        logger.warning("Could not read config directly from PostgreSQL: %s. Falling back to Redis mirror.", e)
+        try:
+            r = get_redis_client()
+            m = await r.get("telegram:active:mode")
+            v = await r.get("telegram:active:config_version")
+            mode = m.decode() if isinstance(m, bytes) else (str(m) if m else "local")
+            version = v.decode() if isinstance(v, bytes) else (str(v) if v else "1")
+            return mode, version
+        except Exception:
+            return "local", "1"
 
 
 async def wait_for_readiness() -> None:
+    """
+    Block until /config/state/READY exists on disk.
+    READY indicates runtime artifacts correspond to PostgreSQL ACTIVE.
+    """
     ready_file = Path(settings.RUNTIME_READY_FILE)
     while not ready_file.is_file():
         logger.info("Waiting for runtime state reconciliation (%s)...", ready_file)
-        await asyncio.sleep(2)
-    logger.info("Startup readiness confirmed (%s exists).", ready_file)
+        await asyncio.sleep(1.0)
+    logger.info("Runtime readiness confirmed (%s exists).", ready_file)
 
 
 async def main() -> None:
     logger.info("Initializing Telegram Bot Service...")
 
-    # 1. Startup readiness gating
-    await wait_for_readiness()
-
     dp = Dispatcher()
     setup_handlers(dp)
 
     reload_event = asyncio.Event()
+    current_version: Optional[str] = None
 
+    # Resilient Redis Pub/Sub listener with auto-reconnect
     async def listen_for_reloads():
-        try:
-            r = get_redis_client()
-            pubsub = r.pubsub()
-            await pubsub.subscribe("telegram:config:reload")
-            async for message in pubsub.listen():
-                if message and message.get("type") == "message":
-                    logger.info("Configuration reload event received via Redis. Cycling Bot session...")
-                    reload_event.set()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("Redis pubsub listener encountered error: %s", e)
+        while True:
+            try:
+                r = get_redis_client()
+                pubsub = r.pubsub()
+                await pubsub.subscribe("telegram:config:reload")
+                async for message in pubsub.listen():
+                    if message and message.get("type") == "message":
+                        logger.info("Configuration reload event received via Redis. Cycling Bot session...")
+                        reload_event.set()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Redis pubsub listener error: %s. Reconnecting in 2s...", e)
+                await asyncio.sleep(2.0)
 
-    reload_listener_task = asyncio.create_task(listen_for_reloads())
+    # Readiness monitor: signals reload immediately when READY is unlinked
+    async def monitor_readiness():
+        ready_file = Path(settings.RUNTIME_READY_FILE)
+        while True:
+            try:
+                await asyncio.sleep(1.0)
+                if not ready_file.is_file():
+                    # READY unlinked: halt polling immediately
+                    reload_event.set()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+
+    # 30-second background PostgreSQL drift heartbeat
+    async def drift_heartbeat():
+        while True:
+            try:
+                await asyncio.sleep(30.0)
+                ready_file = Path(settings.RUNTIME_READY_FILE)
+                if not ready_file.is_file():
+                    reload_event.set()
+                    continue
+
+                async with AsyncSessionLocal() as session:
+                    stmt = select(Setting.value).where(
+                        Setting.key == "telegram_config_version", Setting.status == "ACTIVE"
+                    )
+                    res = await session.execute(stmt)
+                    db_version = res.scalar_one_or_none()
+                    if db_version and current_version and str(db_version) != str(current_version):
+                        logger.info(
+                            "Heartbeat drift detected (DB version: %s, local: %s). Cycling bot...",
+                            db_version,
+                            current_version,
+                        )
+                        reload_event.set()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Heartbeat check warning: %s", e)
+
+    reload_task = asyncio.create_task(listen_for_reloads())
+    readiness_task = asyncio.create_task(monitor_readiness())
+    heartbeat_task = asyncio.create_task(drift_heartbeat())
 
     try:
         while True:
             reload_event.clear()
+
+            # Gate on READY existence before starting any session
+            await wait_for_readiness()
+
             token = read_runtime_token()
             if not token:
-                logger.info("Bot token not configured. Waiting for configuration in Web Admin...")
-                # Wait until token file appears or reload event fires
+                logger.info("Bot token not configured in %s. Waiting...", settings.RUNTIME_BOT_TOKEN_FILE)
                 while not token and not reload_event.is_set():
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1.0)
                     token = read_runtime_token()
                 if not token:
                     continue
 
-            mode = await read_runtime_mode()
-            logger.info("Configuring Bot with mode: %s", mode)
+            mode, current_version = await read_authoritative_config()
+            logger.info("Configuring Bot with mode: %s, config_version: %s", mode, current_version)
 
             if mode == "local":
                 session = AiohttpSession(
@@ -127,7 +201,6 @@ async def main() -> None:
                 dp.start_polling(bot, allowed_updates=["message", "callback_query"])
             )
 
-            # Wait until reload event is signaled or polling task ends
             waiter = asyncio.create_task(reload_event.wait())
             done, pending = await asyncio.wait(
                 [polling_task, waiter],
@@ -135,14 +208,12 @@ async def main() -> None:
             )
 
             if polling_task in done:
-                # Polling terminated on its own
                 exc = polling_task.exception() if not polling_task.cancelled() else None
                 if exc:
                     logger.error("Bot polling stopped with error: %s", exc)
                 waiter.cancel()
             else:
-                # Reload triggered: cancel polling and restart
-                logger.info("Stopping current polling instance for config reload...")
+                logger.info("Halting current polling instance (reload or unreadiness signaled)...")
                 polling_task.cancel()
                 try:
                     await polling_task
@@ -150,12 +221,14 @@ async def main() -> None:
                     pass
 
             await bot.session.close()
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Bot service shutdown requested.")
     finally:
-        reload_listener_task.cancel()
+        reload_task.cancel()
+        readiness_task.cancel()
+        heartbeat_task.cancel()
 
 
 if __name__ == "__main__":

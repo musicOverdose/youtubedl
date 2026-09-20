@@ -18,6 +18,7 @@ from src.core.logger import setup_logger
 from src.core.redis import get_redis_client
 from src.models.job import Job
 from src.models.job_request import JobRequest
+from src.models.setting import Setting
 from src.services.ai_service import AIService
 from src.services.cache_service import CacheService
 from src.services.ffmpeg_service import FFmpegService
@@ -143,28 +144,40 @@ class JobProcessor:
             logger.info("Local Bot API handoff via URI: %s", file_uri)
 
             try:
-                if operation == OperationType.VIDEO.value or operation == "VIDEO":
-                    msg = await bot.send_video(
-                        chat_id=channel_id,
-                        video=file_uri,
-                        caption=caption,
-                        **extra_kwargs,
-                    )
-                elif operation == OperationType.AUDIO.value or operation == "AUDIO":
-                    msg = await bot.send_audio(
-                        chat_id=channel_id,
-                        audio=file_uri,
-                        title=job_title,
-                        **extra_kwargs,
-                    )
-                else:
-                    msg = await bot.send_document(
-                        chat_id=channel_id,
-                        document=file_uri,
-                        caption=caption,
-                        **extra_kwargs,
-                    )
-                return msg.message_id, file_size
+                max_retries = 3
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        if operation == OperationType.VIDEO.value or operation == "VIDEO":
+                            msg = await bot.send_video(
+                                chat_id=channel_id,
+                                video=file_uri,
+                                caption=caption,
+                                **extra_kwargs,
+                            )
+                        elif operation == OperationType.AUDIO.value or operation == "AUDIO":
+                            msg = await bot.send_audio(
+                                chat_id=channel_id,
+                                audio=file_uri,
+                                title=job_title,
+                                **extra_kwargs,
+                            )
+                        else:
+                            msg = await bot.send_document(
+                                chat_id=channel_id,
+                                document=file_uri,
+                                caption=caption,
+                                **extra_kwargs,
+                            )
+                        return msg.message_id, file_size
+                    except Exception as ex:
+                        if attempt < max_retries:
+                            logger.warning(
+                                "Local Bot API handoff attempt %d/%d failed: %s. Retrying in 1s...",
+                                attempt, max_retries, ex
+                            )
+                            await asyncio.sleep(1.0)
+                        else:
+                            raise
             finally:
                 # Immediate cleanup of transfer directory
                 shutil.rmtree(transfer_job_dir, ignore_errors=True)
@@ -178,17 +191,40 @@ class JobProcessor:
         os.makedirs(job_dir, exist_ok=True)
         transfer_job_dir = Path(settings.TRANSFER_DIR) / job_id
 
-        # Resolve active bot and mode dynamically
-        if self.bot is not None:
-            bot = self.bot
+        # Resolve authoritative non-secret Telegram configuration directly from PostgreSQL
+        api_mode = "local"
+        cache_channel_id = None
+        config_version = "1"
+        try:
+            async with AsyncSessionLocal() as cfg_session:
+                stmt = select(Setting).where(Setting.status == "ACTIVE")
+                res = await cfg_session.execute(stmt)
+                active_map = {s.key: s.value for s in res.scalars().all()}
+                api_mode = active_map.get("telegram_api_mode") or "local"
+                chan_str = active_map.get("telegram_cache_channel_id")
+                if chan_str:
+                    cache_channel_id = int(chan_str)
+                config_version = active_map.get("telegram_config_version") or "1"
+        except Exception as e:
+            logger.warning("Could not read authoritative settings from PostgreSQL: %s. Falling back to Redis mirror.", e)
             try:
                 r = get_redis_client()
                 m = await r.get("telegram:active:mode")
-                api_mode = m.decode("utf-8") if isinstance(m, bytes) else str(m) if m else (settings.TELEGRAM_API_MODE or "local")
+                if m:
+                    api_mode = m.decode("utf-8") if isinstance(m, bytes) else str(m)
+                c = await r.get("telegram:active:cache_channel_id")
+                if c:
+                    cache_channel_id = int(c.decode("utf-8") if isinstance(c, bytes) else str(c))
             except Exception:
-                api_mode = settings.TELEGRAM_API_MODE or "local"
+                pass
+
+        bot = None
+        own_bot = False
+        if self.bot is not None:
+            bot = self.bot
         else:
-            bot, api_mode = await TelegramClientFactory.get_client()
+            bot, api_mode = await TelegramClientFactory.get_client(mode=api_mode)
+            own_bot = True
 
         async with AsyncSessionLocal() as session:
             # 1. Fetch Job and active requests
@@ -201,6 +237,8 @@ class JobProcessor:
                 await QueueService.release_active_job(job_id)
                 shutil.rmtree(job_dir, ignore_errors=True)
                 shutil.rmtree(transfer_job_dir, ignore_errors=True)
+                if own_bot and bot is not None:
+                    await bot.session.close()
                 return
 
             req_stmt = select(JobRequest).where(JobRequest.job_id == job_id)
@@ -225,6 +263,8 @@ class JobProcessor:
                 await QueueService.release_active_job(job_id)
                 shutil.rmtree(job_dir, ignore_errors=True)
                 shutil.rmtree(transfer_job_dir, ignore_errors=True)
+                if own_bot and bot is not None:
+                    await bot.session.close()
                 return
 
             # Update job status to PREPARING
@@ -242,19 +282,8 @@ class JobProcessor:
                     return
 
                 uploaded_msg_id = None
-                cache_channel_id = settings.TELEGRAM_CACHE_CHANNEL_ID
-                # Also attempt to check Redis for dynamic cache channel ID
-                try:
-                    r = get_redis_client()
-                    c_chan = await r.get("telegram:active:cache_channel_id")
-                    if c_chan:
-                        val = c_chan.decode("utf-8") if isinstance(c_chan, bytes) else str(c_chan)
-                        cache_channel_id = int(val)
-                except Exception:
-                    pass
-
                 if not cache_channel_id:
-                    raise ValueError("TELEGRAM_CACHE_CHANNEL_ID is not configured!")
+                    raise ValueError("TELEGRAM_CACHE_CHANNEL_ID is not configured in PostgreSQL ACTIVE settings!")
 
                 # ==========================================
                 # PIPELINE: VIDEO PROCESSING
@@ -571,6 +600,12 @@ class JobProcessor:
                 await notifier.update("❌", "Failed", f"Error: {str(e)[:120]}", force=True)
 
             finally:
+                if own_bot and bot is not None:
+                    try:
+                        await bot.session.close()
+                    except Exception as e:
+                        logger.debug("Error closing worker bot session: %s", e)
+
                 # GUARANTEED CLEANUP:
                 shutil.rmtree(job_dir, ignore_errors=True)
                 shutil.rmtree(transfer_job_dir, ignore_errors=True)

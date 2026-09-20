@@ -159,6 +159,7 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - bot_runtime_secrets:/config/runtime:ro
+      - bot_runtime_state:/config/state:ro
       - cookie_secrets:/config/secrets:ro
       - temp_data:/tmp/ytdl:rw
       - telegram_upload_tmp:/transfer:rw
