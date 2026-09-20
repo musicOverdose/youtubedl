@@ -89,29 +89,7 @@ services:
     volumes:
       - telegram_bot_api_temp:/tmp/telegram-bot-api:ro
       - telegram_bot_api_data:/var/lib/telegram-bot-api:ro
-    command: >
-      python3 -c "
-      import os, time, redis
-      r = redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0'))
-      def du(path):
-          total = 0
-          if os.path.exists(path):
-              for root, _, files in os.walk(path):
-                  for f in files:
-                      fp = os.path.join(root, f)
-                      if os.path.exists(fp) and not os.path.islink(fp):
-                          total += os.path.getsize(fp)
-          return total
-      while True:
-          try:
-              data_bytes = du('/var/lib/telegram-bot-api')
-              temp_bytes = du('/tmp/telegram-bot-api')
-              r.set('telemetry:local_bot_api:data_bytes', str(data_bytes))
-              r.set('telemetry:local_bot_api:temp_bytes', str(temp_bytes))
-          except Exception:
-              pass
-          time.sleep(30)
-      "
+    command: ["python3", "-m", "src.telemetry.local_bot_api"]
     depends_on:
       redis:
         condition: service_healthy

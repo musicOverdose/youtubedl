@@ -366,7 +366,7 @@ Access the dashboard at `http://<your-server-ip>:8085`.
 
 ## 🧪 Testing
 
-The repository contains a comprehensive 52-test automated test suite:
+The repository contains a comprehensive 53-test automated test suite:
 
 ```bash
 # Run complete test suite:
