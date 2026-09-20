@@ -420,3 +420,71 @@ async def test_worker_token_loading_strictly_from_runtime_file(test_dirs, monkey
     bot, mode = await TelegramClientFactory.get_client()
     assert bot.token == "123456:strict_runtime_token_12345"
     await bot.session.close()
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_concurrency_in_admin_init(pg_engine, monkeypatch):
+    """
+    Verifies against real PostgreSQL:
+    1. Concurrency-safe initialization using session-level advisory lock (ID 73541630).
+    2. Concurrent executions of AuthService.init_admin_credentials() serialize cleanly.
+    3. Re-reads DB state while holding lock, so first successful initializer wins.
+    """
+    import src.services.auth_service as auth_mod
+    from src.services.auth_service import AuthService, ADMIN_AUTH_LOCK_ID
+
+    monkeypatch.setattr(auth_mod, "engine", pg_engine)
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "FirstPass123!")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", None)
+    monkeypatch.delenv("ADMIN_PASSWORD_RESET", raising=False)
+
+    # Clean existing admin settings from test DB
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            delete(Setting).where(
+                Setting.key.in_(["admin_username", "admin_password_hash"])
+            )
+        )
+
+    # 1. Verify session-level lock acquisition on dedicated connection
+    async with pg_engine.connect() as lock_conn:
+        locked = await lock_conn.scalar(text(f"SELECT pg_try_advisory_lock({ADMIN_AUTH_LOCK_ID})"))
+        assert locked is True
+        await lock_conn.rollback()
+
+        # Another connection cannot acquire it simultaneously
+        async with pg_engine.connect() as lock_conn2:
+            locked2 = await lock_conn2.scalar(text(f"SELECT pg_try_advisory_lock({ADMIN_AUTH_LOCK_ID})"))
+            assert locked2 is False
+            await lock_conn2.rollback()
+
+        # Release lock
+        unlocked = await lock_conn.scalar(text(f"SELECT pg_advisory_unlock({ADMIN_AUTH_LOCK_ID})"))
+        assert unlocked is True
+        await lock_conn.rollback()
+
+    # 2. Test concurrent execution of init_admin_credentials
+    results = await asyncio.gather(
+        AuthService.init_admin_credentials(),
+        AuthService.init_admin_credentials(),
+        return_exceptions=True,
+    )
+    for res in results:
+        assert not isinstance(res, Exception), f"Concurrent admin init failed: {res}"
+
+    # 3. Verify exactly one active password hash row exists in PostgreSQL
+    async with AsyncSession(pg_engine) as session:
+        stmt = select(Setting).where(
+            Setting.key == "admin_password_hash",
+            Setting.status == "ACTIVE",
+        )
+        hashes = (await session.execute(stmt)).scalars().all()
+        assert len(hashes) == 1
+
+        # Verify authentication against PostgreSQL succeeds with FirstPass123!
+        authenticated = await AuthService.authenticate_admin(
+            "admin", "FirstPass123!", session=session
+        )
+        assert authenticated is True
+

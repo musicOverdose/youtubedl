@@ -28,12 +28,23 @@ from src.web.app import app
 
 def test_telegram_html_validator_valid():
     valid_samples = [
-        "👋 Hello, <b>{first_name}</b>!",
-        "Check this <i>italic text</i> and <u>underline</u> and <s>strike</s>.",
-        "Here is <tg-spoiler>a secret</tg-spoiler>!",
+        "👋 Hello, <b>{first_name}</b> and <strong>strong</strong>!",
+        "Check this <i>italic text</i> and <em>emphasis</em>!",
+        "<u>underline</u> and <ins>inserted</ins>.",
+        "<s>strike</s>, <strike>strike2</strike>, and <del>deleted</del>.",
+        '<span class="tg-spoiler">spoiler in span</span> and <tg-spoiler>tag spoiler</tg-spoiler>!',
         'Visit <a href="https://t.me/telegram">Telegram</a> for details.',
-        '<pre><code class="language-python">print("Hello World")</code></pre>',
+        'User link: <a href="tg://user?id=12345678">Profile</a>',
         '<tg-emoji emoji-id="5368324170671202286">👍</tg-emoji>',
+        '<tg-time unix="1710000000">10:00 AM</tg-time>',
+        '<tg-time unix="1710000000" format="relative">in 5 minutes</tg-time>',
+        'Inline <code>code snippet</code> here.',
+        '<pre>fixed width preformatted block</pre>',
+        '<pre class="custom-pre">pre with class</pre>',
+        '<pre><code class="language-python">print("Hello World")</code></pre>',
+        '<blockquote>Standard blockquote with <b>bold</b> and <i>italic</i></blockquote>',
+        '<blockquote expandable>Expandable quote with <a href="https://example.com">link</a></blockquote>',
+        '<blockquote><blockquote>Nested blockquote</blockquote></blockquote>',
         "Plain text without any tags is completely fine.",
     ]
     for sample in valid_samples:
@@ -46,8 +57,27 @@ def test_telegram_html_validator_invalid_tags_and_attrs():
     invalid_samples = [
         ("<script>alert(1)</script>", "not supported"),
         ('<b style="color:red">bold</b>', "does not allow attributes"),
+        ('<strong bad="1">bad</strong>', "does not allow attributes"),
+        ('<i bad="1">bad</i>', "does not allow attributes"),
+        ('<em bad="1">bad</em>', "does not allow attributes"),
+        ('<u bad="1">bad</u>', "does not allow attributes"),
+        ('<ins bad="1">bad</ins>', "does not allow attributes"),
+        ('<s bad="1">bad</s>', "does not allow attributes"),
+        ('<strike bad="1">bad</strike>', "does not allow attributes"),
+        ('<del bad="1">bad</del>', "does not allow attributes"),
+        ('<tg-spoiler bad="1">bad</tg-spoiler>', "does not allow attributes"),
+        ('<span class="not-spoiler">bad</span>', 'must have class="tg-spoiler"'),
+        ('<span class="tg-spoiler" style="color:red">bad</span>', "does not support attribute"),
         ('<a target="_blank" href="https://foo.com">link</a>', "does not support attribute"),
+        ('<a>no href</a>', "requires a non-empty 'href' attribute"),
         ('<tg-emoji>no id</tg-emoji>', "requires a non-empty 'emoji-id' attribute"),
+        ('<tg-emoji emoji-id="123" bad="1">bad</tg-emoji>', "does not support attribute"),
+        ('<tg-time>no unix</tg-time>', "requires a non-empty 'unix' attribute"),
+        ('<tg-time unix="notanumber">bad unix</tg-time>', "requires a numeric 'unix' timestamp"),
+        ('<tg-time unix="123" bad="1">bad attr</tg-time>', "does not support attribute"),
+        ('<code bad="1">inline code with attr</code>', "does not allow attributes"),
+        ('<blockquote bad="1">bad quote</blockquote>', "does not support attribute"),
+        ('<pre bad="1">bad pre</pre>', "does not support attribute"),
         ("<div>content</div>", "not supported"),
         ("", "cannot be empty"),
         ("   ", "cannot be empty"),
@@ -55,6 +85,21 @@ def test_telegram_html_validator_invalid_tags_and_attrs():
     for sample, expected_err_part in invalid_samples:
         is_valid, err = validate_telegram_html(sample)
         assert is_valid is False, f"Expected invalid for '{sample}'"
+        assert expected_err_part.lower() in err.lower()
+
+
+def test_telegram_html_validator_nesting_restrictions():
+    invalid_nesting = [
+        ("<pre><code><b>bold inside code block</b></code></pre>", "cannot be nested inside code block"),
+        ("<pre><i>italic inside pre</i></pre>", "cannot be nested inside <pre>"),
+        ("<b><pre>pre inside b</pre></b>", "<pre> cannot be nested inside <b>"),
+        ("<i><blockquote>blockquote inside i</blockquote></i>", "<blockquote> cannot be nested inside inline tag <i>"),
+        ("<code><blockquote>blockquote inside code</blockquote></code>", "<blockquote> cannot be nested inside inline tag <code>"),
+        ("<pre><pre>pre inside pre</pre></pre>", "<pre> cannot be nested inside <pre>"),
+    ]
+    for sample, expected_err_part in invalid_nesting:
+        is_valid, err = validate_telegram_html(sample)
+        assert is_valid is False, f"Expected invalid nesting for '{sample}'"
         assert expected_err_part.lower() in err.lower()
 
 

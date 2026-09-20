@@ -65,13 +65,35 @@ DEFAULT_WELCOME_MESSAGE = (
 
 class TelegramHTMLValidator(HTMLParser):
     ALLOWED_TAGS = {
-        "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-        "span", "tg-spoiler", "tg-emoji", "a", "code", "pre",
-        "blockquote", "expandable_blockquote",
+        "b", "strong",
+        "i", "em",
+        "u", "ins",
+        "s", "strike", "del",
+        "span", "tg-spoiler",
+        "a",
+        "tg-emoji",
+        "tg-time",
+        "code",
+        "pre",
+        "blockquote",
     }
     NO_ATTR_TAGS = {
-        "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-        "tg-spoiler", "blockquote", "expandable_blockquote",
+        "b", "strong",
+        "i", "em",
+        "u", "ins",
+        "s", "strike", "del",
+        "tg-spoiler",
+    }
+    INLINE_TAGS = {
+        "b", "strong",
+        "i", "em",
+        "u", "ins",
+        "s", "strike", "del",
+        "span", "tg-spoiler",
+        "a",
+        "tg-emoji",
+        "tg-time",
+        "code",
     }
 
     def __init__(self):
@@ -79,6 +101,7 @@ class TelegramHTMLValidator(HTMLParser):
         self.stack = []
         self.errors = []
         self.in_pre = False
+        self.code_in_pre = False
 
     def handle_starttag(self, tag, attrs):
         lower_tag = tag.lower()
@@ -86,42 +109,77 @@ class TelegramHTMLValidator(HTMLParser):
             self.errors.append(f"Tag <{tag}> is not supported by Telegram HTML.")
             return
 
+        # Pre nesting rules
         if self.in_pre:
-            if lower_tag != "code":
+            if self.code_in_pre:
+                self.errors.append(f"Tags cannot be nested inside code block: <{tag}>.")
+            elif lower_tag != "code":
                 self.errors.append(f"Tag <{tag}> cannot be nested inside <pre>.")
 
         if lower_tag == "pre":
-            if self.stack:
-                self.errors.append("<pre> cannot be nested inside another tag.")
+            if any(parent in self.INLINE_TAGS or parent == "pre" for parent in self.stack):
+                self.errors.append(f"<pre> cannot be nested inside <{self.stack[-1]}>.")
             self.in_pre = True
+
+        if lower_tag == "code" and self.in_pre:
+            self.code_in_pre = True
+
+        # Blockquote nesting rules
+        if lower_tag == "blockquote":
+            if any(parent in self.INLINE_TAGS or parent == "pre" for parent in self.stack):
+                self.errors.append(f"<blockquote> cannot be nested inside inline tag <{self.stack[-1]}>.")
 
         attrs_dict = dict(attrs)
 
+        # Attribute validation
         if lower_tag in self.NO_ATTR_TAGS:
             if attrs:
                 self.errors.append(f"Tag <{tag}> does not allow attributes.")
-        elif lower_tag == "a":
-            if "href" not in attrs_dict or not attrs_dict["href"].strip():
-                self.errors.append("Tag <a> requires a non-empty 'href' attribute.")
-            for attr_name in attrs_dict:
-                if attr_name != "href":
-                    self.errors.append(f"Tag <a> does not support attribute '{attr_name}'.")
         elif lower_tag == "span":
             if attrs_dict.get("class") != "tg-spoiler":
                 self.errors.append("Tag <span> must have class=\"tg-spoiler\".")
             for attr_name in attrs_dict:
                 if attr_name != "class":
                     self.errors.append(f"Tag <span> does not support attribute '{attr_name}'.")
+        elif lower_tag == "a":
+            if "href" not in attrs_dict or not attrs_dict["href"].strip():
+                self.errors.append("Tag <a> requires a non-empty 'href' attribute.")
+            for attr_name in attrs_dict:
+                if attr_name != "href":
+                    self.errors.append(f"Tag <a> does not support attribute '{attr_name}'.")
         elif lower_tag == "tg-emoji":
             if "emoji-id" not in attrs_dict or not attrs_dict["emoji-id"].strip():
                 self.errors.append("Tag <tg-emoji> requires a non-empty 'emoji-id' attribute.")
             for attr_name in attrs_dict:
                 if attr_name != "emoji-id":
                     self.errors.append(f"Tag <tg-emoji> does not support attribute '{attr_name}'.")
-        elif lower_tag in ("code", "pre"):
+        elif lower_tag == "tg-time":
+            if "unix" not in attrs_dict or not str(attrs_dict["unix"]).strip():
+                self.errors.append("Tag <tg-time> requires a non-empty 'unix' attribute.")
+            else:
+                try:
+                    int(str(attrs_dict["unix"]).strip())
+                except ValueError:
+                    self.errors.append("Tag <tg-time> requires a numeric 'unix' timestamp attribute.")
+            for attr_name in attrs_dict:
+                if attr_name not in ("unix", "format"):
+                    self.errors.append(f"Tag <tg-time> does not support attribute '{attr_name}'.")
+        elif lower_tag == "blockquote":
+            for attr_name in attrs_dict:
+                if attr_name != "expandable":
+                    self.errors.append(f"Tag <blockquote> does not support attribute '{attr_name}'.")
+        elif lower_tag == "pre":
             for attr_name in attrs_dict:
                 if attr_name != "class":
-                    self.errors.append(f"Tag <{tag}> does not support attribute '{attr_name}'.")
+                    self.errors.append(f"Tag <pre> does not support attribute '{attr_name}'.")
+        elif lower_tag == "code":
+            if self.in_pre:
+                for attr_name in attrs_dict:
+                    if attr_name != "class":
+                        self.errors.append(f"Tag <code> does not support attribute '{attr_name}'.")
+            else:
+                if attrs:
+                    self.errors.append("Inline <code> tag does not allow attributes.")
 
         self.stack.append(lower_tag)
 
@@ -139,8 +197,11 @@ class TelegramHTMLValidator(HTMLParser):
         if top != lower_tag:
             self.errors.append(f"Mismatched closing tag: expected </{top}>, got </{tag}>.")
 
-        if lower_tag == "pre":
+        if lower_tag == "code" and self.in_pre:
+            self.code_in_pre = False
+        elif lower_tag == "pre":
             self.in_pre = False
+            self.code_in_pre = False
 
 
 def validate_telegram_html(text: str) -> tuple[bool, str]:

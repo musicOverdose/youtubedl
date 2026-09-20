@@ -119,3 +119,29 @@ async def test_admin_password_reset_flag(monkeypatch):
     assert await AuthService.authenticate_admin("admin", "OldPass123!") is False
     assert await AuthService.authenticate_admin("admin", "ResetPass789!") is True
 
+
+@pytest.mark.asyncio
+async def test_advisory_lock_concurrency_in_admin_init(monkeypatch):
+    import asyncio
+    from src.core.config import settings
+    from src.services.auth_service import AuthService
+
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "ConcurrentPass123!")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", None)
+    monkeypatch.delenv("ADMIN_PASSWORD_RESET", raising=False)
+
+    # Concurrently execute init_admin_credentials
+    results = await asyncio.gather(
+        AuthService.init_admin_credentials(),
+        AuthService.init_admin_credentials(),
+        AuthService.init_admin_credentials(),
+        return_exceptions=True,
+    )
+    for res in results:
+        assert not isinstance(res, Exception), f"Concurrent init failed: {res}"
+
+    assert await AuthService.authenticate_admin("admin", "ConcurrentPass123!") is True
+
+
+
