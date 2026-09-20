@@ -13,13 +13,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const u = document.getElementById('login-username').value;
     const p = document.getElementById('login-password').value;
     const errBox = document.getElementById('login-error');
+    errBox.classList.add('hidden');
     try {
       await API.post('/api/auth/login', { username: u, password: p });
       document.getElementById('login-modal').classList.remove('active');
       loadSection(activeSection);
     } catch (err) {
-      errBox.innerText = err.message || 'Login failed';
-      errBox.style.display = 'block';
+      errBox.textContent = err.message || 'Login failed';
+      errBox.classList.remove('hidden');
     }
   });
 });
@@ -27,12 +28,17 @@ document.addEventListener('DOMContentLoaded', () => {
 function initNavigation() {
   document.querySelectorAll('.nav-item').forEach((item) => {
     item.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach((n) => {
+        n.classList.remove('active');
+        n.removeAttribute('aria-current');
+      });
       document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
 
       item.classList.add('active');
+      item.setAttribute('aria-current', 'page');
       activeSection = item.getAttribute('data-section');
-      document.getElementById(`sec-${activeSection}`).classList.add('active');
+      document.getElementById(`sec-${activeSection}`)?.classList.add('active');
+      document.getElementById('page-title').textContent = item.textContent.trim();
       loadSection(activeSection);
     });
   });
@@ -46,7 +52,7 @@ function initNavigation() {
 async function checkAuth() {
   try {
     const me = await API.get('/api/auth/me');
-    document.getElementById('admin-username-display').innerText = me.username;
+    document.getElementById('admin-username-display').textContent = me.username;
   } catch (err) {
     document.getElementById('login-modal').classList.add('active');
   }
@@ -64,19 +70,19 @@ function startPolling() {
 function loadSection(name) {
   switch (name) {
     case 'dashboard': loadDashboard(); break;
-    case 'queue': loadQueue(); break;
-    case 'jobs': loadJobs(); break;
-    case 'cache': loadCache(); break;
-    case 'users': loadUsers(); break;
-    case 'telegram': loadTelegramConfig(); break;
-    case 'must-join': loadMustJoin(); break;
-    case 'youtube': loadYouTube(); break;
-    case 'cookies': loadCookies(); break;
-    case 'ai': loadAI(); break;
-    case 'settings': loadSettings(); break;
-    case 'system': loadSystem(); break;
-    case 'logs': loadLogs(); break;
-    case 'audit': loadAudit(); break;
+    case 'queue':     loadQueue();     break;
+    case 'jobs':      loadJobs();      break;
+    case 'cache':     loadCache();     break;
+    case 'users':     loadUsers();     break;
+    case 'telegram':  loadTelegramConfig(); break;
+    case 'must-join': loadMustJoin();  break;
+    case 'youtube':   loadYouTube();   break;
+    case 'cookies':   loadCookies();   break;
+    case 'ai':        loadAI();        break;
+    case 'settings':  loadSettings();  break;
+    case 'system':    loadSystem();    break;
+    case 'logs':      loadLogs();      break;
+    case 'audit':     loadAudit();     break;
   }
 }
 
@@ -84,43 +90,48 @@ function loadSection(name) {
 async function loadDashboard() {
   try {
     const data = await API.get('/api/dashboard/stats');
-    document.getElementById('stat-cpu').innerText = `${data.system.cpu_percent}%`;
-    document.getElementById('stat-ram').innerText = `${data.system.ram_used_gb} / ${data.system.ram_total_gb} GB (${data.system.ram_percent}%)`;
-    document.getElementById('stat-disk').innerText = `${data.system.disk_used_gb} / ${data.system.disk_total_gb} GB`;
-    document.getElementById('stat-temp').innerText = `${data.system.temp_used_gb} GB`;
+    document.getElementById('stat-cpu').textContent = `${data.system.cpu_percent}%`;
+    document.getElementById('stat-ram').textContent = `${data.system.ram_used_gb} / ${data.system.ram_total_gb} GB (${data.system.ram_percent}%)`;
+    document.getElementById('stat-disk').textContent = `${data.system.disk_used_gb} / ${data.system.disk_total_gb} GB`;
+    document.getElementById('stat-temp').textContent = `${data.system.temp_used_gb} GB`;
 
-    document.getElementById('stat-active-jobs').innerText = `${data.queue.active_count} / ${data.queue.max_active}`;
-    document.getElementById('stat-queue-len').innerText = data.queue.queued_count;
-    document.getElementById('stat-cache-entries').innerText = data.cache.entries_count;
-    document.getElementById('stat-cache-hitrate').innerText = `${data.cache.hit_rate_pct}%`;
-    document.getElementById('stat-completed').innerText = data.jobs.completed;
-    document.getElementById('stat-failed').innerText = data.jobs.failed;
+    document.getElementById('stat-active-jobs').textContent = `${data.queue.active_count} / ${data.queue.max_active}`;
+    document.getElementById('stat-queue-len').textContent = data.queue.queued_count;
+    document.getElementById('stat-cache-entries').textContent = data.cache.entries_count;
+    document.getElementById('stat-cache-hitrate').textContent = `${data.cache.hit_rate_pct}%`;
+    document.getElementById('stat-completed').textContent = data.jobs.completed;
+    document.getElementById('stat-failed').textContent = data.jobs.failed;
 
-    document.getElementById('stat-max-dur').innerText = data.settings.max_duration_formatted;
-    document.getElementById('stat-ai-status').innerText = data.settings.ai_enabled ? (data.settings.ai_configured ? 'ON (Ready)' : 'ON (Not Configured)') : 'OFF';
-    document.getElementById('stat-cookie-status').innerText = data.settings.cookies_enabled ? 'ON' : 'OFF';
-    document.getElementById('stat-mj-status').innerText = data.settings.must_join_enabled ? `ON (${data.settings.required_channels_count} channels)` : 'OFF';
+    document.getElementById('stat-max-dur').textContent = data.settings.max_duration_formatted;
+    document.getElementById('stat-ai-status').textContent = data.settings.ai_enabled
+      ? (data.settings.ai_configured ? 'ON (Ready)' : 'ON (Not Configured)') : 'OFF';
+    document.getElementById('stat-cookie-status').textContent = data.settings.cookies_enabled ? 'ON' : 'OFF';
+    document.getElementById('stat-mj-status').textContent = data.settings.must_join_enabled
+      ? `ON (${data.settings.required_channels_count} channels)` : 'OFF';
 
-    // Tool versions
-    document.getElementById('v-app').innerText = data.tools.application;
-    document.getElementById('v-py').innerText = data.tools.python;
-    document.getElementById('v-ytdlp').innerText = data.tools.ytdlp;
-    document.getElementById('v-ejs').innerText = data.tools.ytdlp_ejs;
-    document.getElementById('v-ffmpeg').innerText = data.tools.ffmpeg;
-    document.getElementById('v-deno').innerText = data.tools.deno;
+    document.getElementById('v-app').textContent    = data.tools.application;
+    document.getElementById('v-py').textContent     = data.tools.python;
+    document.getElementById('v-ytdlp').textContent  = data.tools.ytdlp;
+    document.getElementById('v-ejs').textContent    = data.tools.ytdlp_ejs;
+    document.getElementById('v-ffmpeg').textContent = data.tools.ffmpeg;
+    document.getElementById('v-deno').textContent   = data.tools.deno;
   } catch (err) {}
 }
 
 // 2. QUEUE
+
+const PAUSE_SVG  = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+const RESUME_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+
 async function loadQueue() {
   try {
     const data = await API.get('/api/queue');
     const pauseBtn = document.getElementById('btn-queue-pause');
     if (data.is_paused) {
-      pauseBtn.innerText = '▶ Resume Queue';
+      pauseBtn.innerHTML = `${RESUME_SVG} Resume Queue`;
       pauseBtn.className = 'btn btn-success';
     } else {
-      pauseBtn.innerText = '⏸ Pause Queue';
+      pauseBtn.innerHTML = `${PAUSE_SVG} Pause Queue`;
       pauseBtn.className = 'btn btn-warning';
     }
     document.getElementById('queue-max-active-input').value = data.max_active_jobs;
@@ -128,19 +139,19 @@ async function loadQueue() {
     // Active Jobs Table
     const activeTbody = document.getElementById('tbody-active-jobs');
     if (data.active_jobs.length === 0) {
-      activeTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No active jobs currently running</td></tr>';
+      activeTbody.innerHTML = '<tr class="empty-row"><td colspan="6">No active jobs currently running</td></tr>';
     } else {
       activeTbody.innerHTML = data.active_jobs.map(j => `
         <tr>
           <td><code>${j.id.slice(0, 8)}</code></td>
           <td><b>${escapeHtml(j.title)}</b></td>
-          <td>${j.operation} ${j.codec ? `· ${j.codec}` : ''} ${j.resolution || ''}</td>
+          <td>${j.operation}${j.codec ? ` · ${j.codec}` : ''}${j.resolution ? ` ${j.resolution}` : ''}</td>
           <td><span class="badge badge-info">${j.stage}</span></td>
           <td>
-            ${j.progress}% ${j.speed ? `(${j.speed})` : ''} ${j.eta ? `ETA: ${j.eta}` : ''}
-            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${j.progress}%"></div></div>
+            <span class="font-mono font-sm">${j.progress}%${j.speed ? ` (${j.speed})` : ''}${j.eta ? ` ETA: ${j.eta}` : ''}</span>
+            <div class="progress-wrap"><div class="progress-fill" style="width:${j.progress}%"></div></div>
           </td>
-          <td><button class="btn btn-danger" onclick="cancelJob('${j.id}')">Cancel</button></td>
+          <td><button class="btn btn-danger btn-sm" onclick="cancelJob('${j.id}')">Cancel</button></td>
         </tr>
       `).join('');
     }
@@ -148,16 +159,16 @@ async function loadQueue() {
     // Queued Jobs Table
     const queuedTbody = document.getElementById('tbody-queued-jobs');
     if (data.queued_jobs.length === 0) {
-      queuedTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Queue is empty</td></tr>';
+      queuedTbody.innerHTML = '<tr class="empty-row"><td colspan="6">Queue is empty</td></tr>';
     } else {
       queuedTbody.innerHTML = data.queued_jobs.map(j => `
         <tr>
           <td><b>#${j.position}</b></td>
           <td><code>${j.id.slice(0, 8)}</code></td>
           <td><b>${escapeHtml(j.title)}</b></td>
-          <td>${j.operation} ${j.codec ? `· ${j.codec}` : ''} ${j.resolution || ''}</td>
-          <td>${formatDate(j.queued_at)}</td>
-          <td><button class="btn btn-danger" onclick="cancelJob('${j.id}')">Cancel</button></td>
+          <td>${j.operation}${j.codec ? ` · ${j.codec}` : ''}${j.resolution ? ` ${j.resolution}` : ''}</td>
+          <td class="font-sm">${formatDate(j.queued_at)}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="cancelJob('${j.id}')">Cancel</button></td>
         </tr>
       `).join('');
     }
@@ -178,15 +189,17 @@ async function updateConcurrency() {
   const val = parseInt(document.getElementById('queue-max-active-input').value, 10);
   try {
     const res = await API.post('/api/queue/concurrency', { max_active_jobs: val });
-    if (res.warning) alert(`⚠️ ${res.warning}`);
+    if (res.warning) toastWarning(res.warning, 'Queue Warning');
+    else toastSuccess(`Max concurrency set to ${val}`);
     loadQueue();
   } catch (err) {
-    alert(err.message);
+    toastError(err.message, 'Concurrency Error');
   }
 }
 
 async function cancelJob(id) {
-  if (confirm(`Cancel job ${id}?`)) {
+  const confirmed = await showConfirm(`Cancel job ${id.slice(0, 8)}…?`, 'Cancel Job', 'Cancel Job', 'btn-danger');
+  if (confirmed) {
     await API.post(`/api/queue/cancel/${id}`, {});
     loadQueue();
   }
@@ -200,19 +213,19 @@ async function loadJobs() {
     const data = await API.get(`/api/jobs?limit=50&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`);
     const tbody = document.getElementById('tbody-jobs');
     if (data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No jobs found</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No jobs found</td></tr>';
     } else {
       tbody.innerHTML = data.items.map(j => `
         <tr>
           <td><code>${j.id.slice(0, 8)}</code></td>
           <td><b>${escapeHtml(j.title)}</b></td>
-          <td>${j.operation} ${j.codec ? `· ${j.codec}` : ''} ${j.resolution || ''}</td>
+          <td class="font-sm">${j.operation}${j.codec ? ` · ${j.codec}` : ''}${j.resolution ? ` ${j.resolution}` : ''}</td>
           <td><span class="badge ${getBadgeClass(j.status)}">${j.status}</span></td>
-          <td>${formatDate(j.created_at)}</td>
-          <td>${formatDate(j.completed_at)}</td>
+          <td class="font-sm">${formatDate(j.created_at)}</td>
+          <td class="font-sm">${formatDate(j.completed_at)}</td>
           <td>
-            ${j.status === 'FAILED' ? `<button class="btn btn-secondary" onclick="retryJob('${j.id}')">Retry</button>` : ''}
-            ${['QUEUED', 'PREPARING', 'DOWNLOADING', 'PROCESSING', 'UPLOADING'].includes(j.status) ? `<button class="btn btn-danger" onclick="cancelJob('${j.id}')">Cancel</button>` : ''}
+            ${j.status === 'FAILED' ? `<button class="btn btn-secondary btn-sm" onclick="retryJob('${j.id}')">Retry</button>` : ''}
+            ${['QUEUED', 'PREPARING', 'DOWNLOADING', 'PROCESSING', 'UPLOADING'].includes(j.status) ? `<button class="btn btn-danger btn-sm" onclick="cancelJob('${j.id}')">Cancel</button>` : ''}
           </td>
         </tr>
       `).join('');
@@ -232,19 +245,19 @@ async function loadCache() {
     const data = await API.get(`/api/cache?limit=50&search=${encodeURIComponent(search)}`);
     const tbody = document.getElementById('tbody-cache');
     if (data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No cached items found</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No cached items found</td></tr>';
     } else {
       tbody.innerHTML = data.items.map(c => `
         <tr>
           <td><code>${c.source_id}</code></td>
           <td><b>${escapeHtml(c.title)}</b></td>
-          <td>${c.operation} ${c.codec || ''} ${c.resolution || c.subtitle_lang || ''}</td>
+          <td class="font-sm">${c.operation} ${c.codec || ''} ${c.resolution || c.subtitle_lang || ''}</td>
           <td>${c.hit_count} hits</td>
-          <td>${c.file_size ? `${(c.file_size / (1024*1024)).toFixed(1)} MB` : 'N/A'}</td>
+          <td class="font-mono font-sm">${c.file_size ? `${(c.file_size / (1024 * 1024)).toFixed(1)} MB` : 'N/A'}</td>
           <td><span class="badge ${c.is_valid ? 'badge-success' : 'badge-danger'}">${c.is_valid ? 'VALID' : 'INVALID'}</span></td>
           <td>
-            ${c.is_valid ? `<button class="btn btn-warning" onclick="invalidateCache(${c.id})">Invalidate</button>` : ''}
-            <button class="btn btn-danger" onclick="deleteCache(${c.id})">Delete</button>
+            ${c.is_valid ? `<button class="btn btn-warning btn-sm" onclick="invalidateCache(${c.id})">Invalidate</button>` : ''}
+            <button class="btn btn-danger btn-sm" onclick="deleteCache(${c.id})">Delete</button>
           </td>
         </tr>
       `).join('');
@@ -258,7 +271,8 @@ async function invalidateCache(id) {
 }
 
 async function deleteCache(id) {
-  if (confirm('Delete this cache record from database?')) {
+  const confirmed = await showConfirm('Delete this cache record from the database?', 'Delete Cache Record', 'Delete', 'btn-danger');
+  if (confirmed) {
     await API.delete(`/api/cache/${id}`);
     loadCache();
   }
@@ -271,18 +285,20 @@ async function loadUsers() {
     const data = await API.get(`/api/users?limit=50&search=${encodeURIComponent(search)}`);
     const tbody = document.getElementById('tbody-users');
     if (data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No users found</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No users found</td></tr>';
     } else {
       tbody.innerHTML = data.items.map(u => `
         <tr>
           <td><code>${u.id}</code></td>
-          <td><b>@${escapeHtml(u.username || 'N/A')}</b> (${escapeHtml(u.first_name || '')})</td>
+          <td><b>@${escapeHtml(u.username || 'N/A')}</b> <span class="text-muted font-sm">(${escapeHtml(u.first_name || '')})</span></td>
           <td><span class="badge ${u.role === 'ADMIN' ? 'badge-info' : 'badge-secondary'}">${u.role}</span></td>
           <td><span class="badge ${u.status === 'ACTIVE' ? 'badge-success' : 'badge-danger'}">${u.status}</span></td>
-          <td>${u.total_jobs} (✅ ${u.successful_jobs} | ❌ ${u.failed_jobs})</td>
-          <td>${formatDate(u.last_seen_at)}</td>
+          <td><span class="font-mono">${u.total_jobs}</span> <span class="text-muted font-sm">(${u.successful_jobs} ok / ${u.failed_jobs} fail)</span></td>
+          <td class="font-sm">${formatDate(u.last_seen_at)}</td>
           <td>
-            ${u.status === 'ACTIVE' ? `<button class="btn btn-danger" onclick="setUserStatus(${u.id}, 'BANNED')">Ban</button>` : `<button class="btn btn-success" onclick="setUserStatus(${u.id}, 'ACTIVE')">Unban</button>`}
+            ${u.status === 'ACTIVE'
+              ? `<button class="btn btn-danger btn-sm" onclick="setUserStatus(${u.id}, 'BANNED')">Ban</button>`
+              : `<button class="btn btn-success btn-sm" onclick="setUserStatus(${u.id}, 'ACTIVE')">Unban</button>`}
           </td>
         </tr>
       `).join('');
@@ -301,40 +317,37 @@ async function loadMustJoin() {
     const data = await API.get('/api/must-join');
     const toggleBtn = document.getElementById('btn-mj-toggle');
     if (data.enabled) {
-      toggleBtn.innerText = 'Must Join: ENABLED';
+      toggleBtn.textContent = 'Must Join: ENABLED';
       toggleBtn.className = 'btn btn-success';
     } else {
-      toggleBtn.innerText = 'Must Join: DISABLED';
+      toggleBtn.textContent = 'Must Join: DISABLED';
       toggleBtn.className = 'btn btn-secondary';
     }
 
     const tbody = document.getElementById('tbody-must-join');
     if (data.channels.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No required channels configured</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No required channels configured</td></tr>';
     } else {
       tbody.innerHTML = data.channels.map(ch => `
         <tr>
           <td><code>${ch.chat_id}</code></td>
           <td><b>${escapeHtml(ch.title)}</b></td>
-          <td>${ch.username ? `@${ch.username}` : (ch.invite_url ? `<a href="${ch.invite_url}" target="_blank">Invite</a>` : 'N/A')}</td>
+          <td>${ch.username ? `@${ch.username}` : (ch.invite_url ? `<a href="${ch.invite_url}" target="_blank" rel="noopener">Invite link</a>` : 'N/A')}</td>
           <td><span class="badge ${ch.bot_status === 'administrator' ? 'badge-success' : 'badge-danger'}">${ch.bot_status}</span></td>
           <td><span class="badge ${ch.enabled ? 'badge-success' : 'badge-secondary'}">${ch.enabled ? 'YES' : 'NO'}</span></td>
-          <td>${formatDate(ch.last_bot_check)}</td>
+          <td class="font-sm">${formatDate(ch.last_bot_check)}</td>
           <td>
-            <button class="btn btn-secondary" onclick="testChannel(${ch.id})">Test</button>
-            <button class="btn btn-danger" onclick="deleteChannel(${ch.id})">Delete</button>
+            <button class="btn btn-secondary btn-sm" onclick="testChannel(${ch.id})">Test</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteChannel(${ch.id})">Delete</button>
           </td>
         </tr>
       `).join('');
     }
 
-    // Load custom Must-Join template message
     try {
       const msgData = await API.get('/api/must-join/message');
       const area = document.getElementById('mj-custom-msg-area');
-      if (area && msgData.message) {
-        area.value = msgData.message;
-      }
+      if (area && msgData.message) area.value = msgData.message;
     } catch (e) {}
   } catch (err) {}
 }
@@ -347,48 +360,60 @@ async function toggleMustJoin() {
 
 async function addChannelModalSubmit(e) {
   e.preventDefault();
-  const cid = parseInt(document.getElementById('mj-chat-id').value, 10);
-  const title = document.getElementById('mj-title').value;
+  const cid     = parseInt(document.getElementById('mj-chat-id').value, 10);
+  const title   = document.getElementById('mj-title').value;
   const username = document.getElementById('mj-username').value;
-  const invite = document.getElementById('mj-invite').value;
+  const invite  = document.getElementById('mj-invite').value;
 
   try {
     await API.post('/api/must-join/channels', {
       chat_id: cid,
-      title: title,
+      title,
       username: username || null,
       invite_url: invite || null,
       enabled: true,
     });
     document.getElementById('modal-add-channel').classList.remove('active');
+    document.getElementById('form-add-channel').reset();
     loadMustJoin();
+    toastSuccess(`Channel "${title}" added successfully`);
   } catch (err) {
-    alert(err.message);
+    toastError(err.message, 'Add Channel Failed');
   }
 }
 
 async function testChannel(id) {
-  const res = await API.post(`/api/must-join/channels/${id}/test`, {});
-  alert(res.is_admin ? '✅ Bot is an administrator in this channel!' : `❌ ${res.detail}`);
+  try {
+    const res = await API.post(`/api/must-join/channels/${id}/test`, {});
+    if (res.is_admin) {
+      toastSuccess('Bot is an administrator in this channel', 'Channel Test');
+    } else {
+      toastError(res.detail || 'Bot is not an administrator', 'Channel Test Failed');
+    }
+  } catch (err) {
+    toastError(err.message, 'Channel Test Error');
+  }
   loadMustJoin();
 }
 
 async function deleteChannel(id) {
-  if (confirm('Remove this required channel?')) {
+  const confirmed = await showConfirm('Remove this required channel?', 'Remove Channel', 'Remove', 'btn-danger');
+  if (confirmed) {
     await API.delete(`/api/must-join/channels/${id}`);
     loadMustJoin();
+    toastSuccess('Channel removed');
   }
 }
 
 // 7. YOUTUBE SETTINGS
 async function loadYouTube() {
   const data = await API.get('/api/settings');
-  document.getElementById('yt-max-height').value = data.default_max_height;
+  document.getElementById('yt-max-height').value         = data.default_max_height;
   document.getElementById('yt-playlists-toggle').checked = data.playlists_enabled;
-  document.getElementById('yt-h264-toggle').checked = data.h264_enabled;
-  document.getElementById('yt-h265-toggle').checked = data.h265_enabled;
-  document.getElementById('yt-mp3-toggle').checked = data.mp3_enabled;
-  document.getElementById('yt-subs-toggle').checked = data.subtitles_enabled;
+  document.getElementById('yt-h264-toggle').checked      = data.h264_enabled;
+  document.getElementById('yt-h265-toggle').checked      = data.h265_enabled;
+  document.getElementById('yt-mp3-toggle').checked       = data.mp3_enabled;
+  document.getElementById('yt-subs-toggle').checked      = data.subtitles_enabled;
 }
 
 // 8. COOKIES
@@ -397,16 +422,15 @@ async function loadCookies() {
     const data = await API.get('/api/cookies');
     const toggleBtn = document.getElementById('btn-cookie-toggle');
     if (data.enabled) {
-      toggleBtn.innerText = 'YouTube Cookies: ON';
+      toggleBtn.textContent = 'Cookies: ON';
       toggleBtn.className = 'btn btn-success';
     } else {
-      toggleBtn.innerText = 'YouTube Cookies: OFF';
+      toggleBtn.textContent = 'Cookies: OFF';
       toggleBtn.className = 'btn btn-secondary';
     }
-
-    document.getElementById('cookie-configured-val').innerText = data.configured ? 'Configured ✅' : 'Not Configured ❌';
-    document.getElementById('cookie-count-val').innerText = data.cookie_count;
-    document.getElementById('cookie-updated-val').innerText = formatDate(data.last_updated);
+    document.getElementById('cookie-configured-val').textContent = data.configured ? 'Configured' : 'Not Configured';
+    document.getElementById('cookie-count-val').textContent      = data.cookie_count;
+    document.getElementById('cookie-updated-val').textContent    = formatDate(data.last_updated);
   } catch (err) {}
 }
 
@@ -421,29 +445,31 @@ async function pasteCookiesSubmit(e) {
   const text = document.getElementById('cookie-paste-area').value;
   try {
     const res = await API.post('/api/cookies/paste', { content: text });
-    alert(`✅ Successfully saved and validated ${res.cookie_count} cookies!`);
+    toastSuccess(`Saved and validated ${res.cookie_count} cookies`, 'Cookies Saved');
     document.getElementById('cookie-paste-area').value = '';
     loadCookies();
   } catch (err) {
-    alert(`❌ ${err.message}`);
+    toastError(err.message, 'Cookie Validation Failed');
   }
 }
 
 async function testCookiesSubmit() {
-  const url = prompt('Enter a YouTube URL to test cookie extraction:', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  const url = window.prompt('Enter a YouTube URL to test cookie extraction:', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
   if (!url) return;
   try {
     const res = await API.post('/api/cookies/test', { url });
-    alert(res.message);
+    toastSuccess(res.message, 'Cookie Test');
   } catch (err) {
-    alert(`❌ ${err.message}`);
+    toastError(err.message, 'Cookie Test Failed');
   }
 }
 
 async function deleteCookiesFile() {
-  if (confirm('Delete saved cookies file?')) {
+  const confirmed = await showConfirm('Delete the saved cookies file?', 'Delete Cookies', 'Delete', 'btn-danger');
+  if (confirmed) {
     await API.delete('/api/cookies');
     loadCookies();
+    toastSuccess('Cookies file deleted');
   }
 }
 
@@ -452,10 +478,10 @@ async function loadAI() {
   try {
     const data = await API.get('/api/ai');
     document.getElementById('ai-enabled-toggle').checked = data.enabled;
-    document.getElementById('ai-provider').value = data.provider;
-    document.getElementById('ai-base-url').value = data.base_url;
-    document.getElementById('ai-model').value = data.model;
-    document.getElementById('ai-api-key-display').innerText = data.api_key_masked || 'None';
+    document.getElementById('ai-provider').value         = data.provider;
+    document.getElementById('ai-base-url').value         = data.base_url;
+    document.getElementById('ai-model').value            = data.model;
+    document.getElementById('ai-api-key-display').textContent = data.api_key_masked || 'None';
   } catch (err) {}
 }
 
@@ -463,69 +489,63 @@ async function saveAISettings(e) {
   e.preventDefault();
   const enabled = document.getElementById('ai-enabled-toggle').checked;
   const provider = document.getElementById('ai-provider').value;
-  const baseUrl = document.getElementById('ai-base-url').value;
-  const model = document.getElementById('ai-model').value;
-  const key = document.getElementById('ai-api-key-input').value;
+  const baseUrl  = document.getElementById('ai-base-url').value;
+  const model    = document.getElementById('ai-model').value;
+  const key      = document.getElementById('ai-api-key-input').value;
 
   try {
-    await API.post('/api/ai', {
-      enabled,
-      provider,
-      base_url: baseUrl,
-      model,
-      api_key: key || null,
-    });
-    alert('AI Settings saved successfully!');
+    await API.post('/api/ai', { enabled, provider, base_url: baseUrl, model, api_key: key || null });
+    toastSuccess('AI settings saved and applied', 'AI Settings');
     document.getElementById('ai-api-key-input').value = '';
     loadAI();
   } catch (err) {
-    alert(err.message);
+    toastError(err.message, 'AI Settings Error');
   }
 }
 
 async function testAI() {
   try {
     const res = await API.post('/api/ai/test', {});
-    alert(res.message);
+    toastSuccess(res.message, 'AI Connection Test');
   } catch (err) {
-    alert(err.message);
+    toastError(err.message, 'AI Test Failed');
   }
 }
 
 // 10. SETTINGS
 async function loadSettings() {
   const data = await API.get('/api/settings');
-  document.getElementById('set-max-dur').value = data.max_video_duration_seconds;
+  document.getElementById('set-max-dur').value        = data.max_video_duration_seconds;
   document.getElementById('set-allow-unknown').checked = data.allow_unknown_duration;
   document.getElementById('set-cache-bypass').checked = data.cache_hit_bypasses_duration_limit;
-  document.getElementById('set-max-per-user').value = data.max_concurrent_per_user;
-  document.getElementById('set-max-queued').value = data.max_queued_per_user;
-  document.getElementById('set-max-temp').value = data.max_temp_storage_gb;
+  document.getElementById('set-max-per-user').value   = data.max_concurrent_per_user;
+  document.getElementById('set-max-queued').value     = data.max_queued_per_user;
+  document.getElementById('set-max-temp').value       = data.max_temp_storage_gb;
 }
 
 async function saveGlobalSettings(e) {
   e.preventDefault();
   const payload = {
-    max_video_duration_seconds: parseInt(document.getElementById('set-max-dur').value, 10),
-    allow_unknown_duration: document.getElementById('set-allow-unknown').checked,
+    max_video_duration_seconds:        parseInt(document.getElementById('set-max-dur').value, 10),
+    allow_unknown_duration:            document.getElementById('set-allow-unknown').checked,
     cache_hit_bypasses_duration_limit: document.getElementById('set-cache-bypass').checked,
-    max_concurrent_per_user: parseInt(document.getElementById('set-max-per-user').value, 10),
-    max_queued_per_user: parseInt(document.getElementById('set-max-queued').value, 10),
-    max_temp_storage_gb: parseInt(document.getElementById('set-max-temp').value, 10),
-    default_max_height: parseInt(document.getElementById('yt-max-height')?.value || '1080', 10),
-    playlists_enabled: document.getElementById('yt-playlists-toggle')?.checked || false,
-    h264_enabled: document.getElementById('yt-h264-toggle')?.checked || true,
-    h265_enabled: document.getElementById('yt-h265-toggle')?.checked || true,
-    mp3_enabled: document.getElementById('yt-mp3-toggle')?.checked || true,
-    subtitles_enabled: document.getElementById('yt-subs-toggle')?.checked || true,
+    max_concurrent_per_user:           parseInt(document.getElementById('set-max-per-user').value, 10),
+    max_queued_per_user:               parseInt(document.getElementById('set-max-queued').value, 10),
+    max_temp_storage_gb:               parseInt(document.getElementById('set-max-temp').value, 10),
+    default_max_height:                parseInt(document.getElementById('yt-max-height')?.value || '1080', 10),
+    playlists_enabled:                 document.getElementById('yt-playlists-toggle')?.checked || false,
+    h264_enabled:                      document.getElementById('yt-h264-toggle')?.checked !== false,
+    h265_enabled:                      document.getElementById('yt-h265-toggle')?.checked !== false,
+    mp3_enabled:                       document.getElementById('yt-mp3-toggle')?.checked !== false,
+    subtitles_enabled:                 document.getElementById('yt-subs-toggle')?.checked !== false,
   };
 
   try {
     await API.post('/api/settings', payload);
-    alert('Settings saved and applied dynamically!');
+    toastSuccess('Settings saved and applied dynamically', 'Settings Saved');
     loadSettings();
   } catch (err) {
-    alert(err.message);
+    toastError(err.message, 'Settings Error');
   }
 }
 
@@ -533,8 +553,10 @@ async function saveGlobalSettings(e) {
 async function loadSystem() {
   try {
     const ready = await API.get('/ready');
-    document.getElementById('sys-ready-db').innerText = ready.database ? 'CONNECTED ✅' : 'ERROR ❌';
-    document.getElementById('sys-ready-redis').innerText = ready.redis ? 'CONNECTED ✅' : 'ERROR ❌';
+    document.getElementById('sys-ready-db').textContent    = ready.database ? 'CONNECTED' : 'ERROR';
+    document.getElementById('sys-ready-db').className      = ready.database ? 'info-row__val text-success bold' : 'info-row__val text-danger bold';
+    document.getElementById('sys-ready-redis').textContent = ready.redis ? 'CONNECTED' : 'ERROR';
+    document.getElementById('sys-ready-redis').className   = ready.redis ? 'info-row__val text-success bold' : 'info-row__val text-danger bold';
   } catch (err) {}
 }
 
@@ -544,9 +566,9 @@ async function loadLogs() {
     const data = await API.get('/api/logs?limit=100');
     const logBox = document.getElementById('log-display');
     if (data.logs.length === 0) {
-      logBox.innerText = 'No logs available.';
+      logBox.textContent = 'No logs available.';
     } else {
-      logBox.innerText = data.logs.map(l => `[${l.timestamp}] [${l.level}] [${l.service}] ${l.message}`).join('\n');
+      logBox.textContent = data.logs.map(l => `[${l.timestamp}] [${l.level}] [${l.service}] ${l.message}`).join('\n');
     }
   } catch (err) {}
 }
@@ -557,15 +579,15 @@ async function loadAudit() {
     const data = await API.get('/api/audit?limit=50');
     const tbody = document.getElementById('tbody-audit');
     if (data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No audit logs</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No audit logs</td></tr>';
     } else {
       tbody.innerHTML = data.items.map(a => `
         <tr>
           <td><code>${a.id}</code></td>
-          <td><span class="badge badge-info">${a.action}</span></td>
+          <td><span class="badge badge-accent">${a.action}</span></td>
           <td><b>${escapeHtml(a.admin_username)}</b></td>
-          <td>${escapeHtml(a.details || '')}</td>
-          <td>${formatDate(a.created_at)}</td>
+          <td class="font-sm">${escapeHtml(a.details || '')}</td>
+          <td class="font-sm">${formatDate(a.created_at)}</td>
         </tr>
       `).join('');
     }
@@ -575,7 +597,11 @@ async function loadAudit() {
 // Helpers
 function escapeHtml(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return str
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;');
 }
 
 function formatDate(isoStr) {
@@ -586,10 +612,10 @@ function formatDate(isoStr) {
 function getBadgeClass(status) {
   switch (status) {
     case 'COMPLETED': return 'badge-success';
-    case 'FAILED': return 'badge-danger';
+    case 'FAILED':    return 'badge-danger';
     case 'CANCELLED': return 'badge-secondary';
-    case 'QUEUED': return 'badge-warning';
-    default: return 'badge-info';
+    case 'QUEUED':    return 'badge-warning';
+    default:          return 'badge-info';
   }
 }
 
@@ -604,65 +630,66 @@ async function loadTelegramConfig() {
     const data = await API.get('/api/telegram/config');
     currentTelegramConfig = data;
 
-    // Set radio mode
     const radios = document.getElementsByName('tg-mode-radio');
     for (const r of radios) {
       if (r.value === data.mode) r.checked = true;
     }
     onTelegramModeChange();
 
-    document.getElementById('tg-derived-endpoint').value = data.derived_endpoint || 'http://telegram-bot-api:8081';
-    document.getElementById('tg-token-masked-display').innerText = data.bot_token_masked || 'Not Set';
-    document.getElementById('tg-api-id').value = data.api_id || '';
-    const idDisplay = document.getElementById('tg-id-display');
-    if (idDisplay) idDisplay.innerText = data.api_id ? String(data.api_id) : 'Not Set';
-    document.getElementById('tg-hash-masked-display').innerText = data.api_hash_masked || 'Not Set';
-    document.getElementById('tg-cache-channel').value = data.cache_channel_id || '';
-    document.getElementById('stat-tg-version').innerText = `v${data.config_version || 1}`;
+    document.getElementById('tg-derived-endpoint').value         = data.derived_endpoint || 'http://telegram-bot-api:8081';
+    document.getElementById('tg-token-masked-display').textContent = data.bot_token_masked || 'Not Set';
+    document.getElementById('tg-api-id').value                   = data.api_id || '';
 
-    // Load dynamic welcome message
+    const idDisplay = document.getElementById('tg-id-display');
+    if (idDisplay) idDisplay.textContent = data.api_id ? String(data.api_id) : 'Not Set';
+
+    document.getElementById('tg-hash-masked-display').textContent = data.api_hash_masked || 'Not Set';
+    document.getElementById('tg-cache-channel').value             = data.cache_channel_id || '';
+    document.getElementById('stat-tg-version').textContent        = `v${data.config_version || 1}`;
+
     await loadWelcomeMessage();
 
-    // Update badges
+    // Bot badge
     const badgeBot = document.getElementById('badge-tg-bot');
     if (data.is_configured) {
       badgeBot.className = 'badge badge-success';
-      badgeBot.innerText = '🟢 Configured';
+      badgeBot.innerHTML = '<span class="dot dot-success"></span>Configured';
     } else {
       badgeBot.className = 'badge badge-danger';
-      badgeBot.innerText = '🔴 Not Configured';
+      badgeBot.innerHTML = '<span class="dot dot-danger"></span>Not Configured';
     }
 
+    // Mode badge
     const badgeMode = document.getElementById('badge-tg-mode');
-    badgeMode.innerText = data.mode === 'local' ? 'Local Bot API' : 'Cloud Bot API';
-    badgeMode.className = data.mode === 'local' ? 'badge badge-info' : 'badge badge-warning';
+    badgeMode.textContent = data.mode === 'local' ? 'Local Bot API' : 'Cloud Bot API';
+    badgeMode.className   = data.mode === 'local' ? 'badge badge-info' : 'badge badge-warning';
 
-    // Test Local API connectivity in background
+    // Local API probe
     if (data.mode === 'local') {
       try {
         await API.post('/api/telegram/test-local-api', {});
         const badgeLocal = document.getElementById('badge-tg-local');
         badgeLocal.className = 'badge badge-success';
-        badgeLocal.innerText = '🟢 Healthy';
+        badgeLocal.innerHTML = '<span class="dot dot-success"></span>Healthy';
       } catch (e) {
         const badgeLocal = document.getElementById('badge-tg-local');
         badgeLocal.className = 'badge badge-danger';
-        badgeLocal.innerText = '🔴 Unreachable';
+        badgeLocal.innerHTML = '<span class="dot dot-danger"></span>Unreachable';
       }
     } else {
       const badgeLocal = document.getElementById('badge-tg-local');
       badgeLocal.className = 'badge badge-secondary';
-      badgeLocal.innerText = '⚪ Standby / Disabled';
+      badgeLocal.innerHTML = '<span class="dot dot-muted"></span>Standby';
     }
 
-    // Load disk telemetry stats from /api/system
+    // Disk telemetry
     try {
       const sysData = await API.get('/api/system');
       if (sysData.stats) {
-        document.getElementById('stat-transfer-usage').innerText = `${Math.round(sysData.stats.worker_transfer_gb * 1024)} MB`;
-        document.getElementById('stat-worker-temp').innerText = `${Math.round(sysData.stats.worker_temp_gb * 1024)} MB`;
-        document.getElementById('stat-botapi-data').innerText = `${Math.round(sysData.stats.bot_api_data_gb * 1024)} MB`;
-        document.getElementById('stat-host-free').innerText = `${sysData.stats.disk_free_gb} GB`;
+        document.getElementById('stat-transfer-usage').textContent = `${Math.round(sysData.stats.worker_transfer_gb * 1024)} MB`;
+        document.getElementById('stat-worker-temp').textContent    = `${Math.round(sysData.stats.worker_temp_gb * 1024)} MB`;
+        document.getElementById('stat-botapi-data').textContent    = `${Math.round(sysData.stats.bot_api_data_gb * 1024)} MB`;
+        document.getElementById('stat-host-free').textContent      = `${sysData.stats.disk_free_gb} GB`;
       }
     } catch (e) {}
   } catch (err) {
@@ -672,14 +699,14 @@ async function loadTelegramConfig() {
 
 function onTelegramModeChange() {
   const selectedMode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
-  const localGroup = document.getElementById('tg-local-credentials-group');
+  const localGroup   = document.getElementById('tg-local-credentials-group');
   const endpointInput = document.getElementById('tg-derived-endpoint');
 
   if (selectedMode === 'local') {
-    if (localGroup) localGroup.style.display = 'block';
+    if (localGroup)    localGroup.style.display = 'block';
     if (endpointInput) endpointInput.value = 'http://telegram-bot-api:8081';
   } else {
-    if (localGroup) localGroup.style.display = 'none';
+    if (localGroup)    localGroup.style.display = 'none';
     if (endpointInput) endpointInput.value = 'https://api.telegram.org';
   }
 }
@@ -691,122 +718,118 @@ function toggleInputMask(id) {
 }
 
 function showTelegramAlert(msg, isSuccess = true) {
-  const el = document.getElementById('telegram-alert');
-  if (!el) return;
-  el.style.display = 'block';
-  el.style.background = isSuccess ? 'rgba(40,167,69,0.15)' : 'rgba(220,53,69,0.15)';
-  el.style.border = isSuccess ? '1px solid #28a745' : '1px solid #dc3545';
-  el.style.color = isSuccess ? '#28a745' : '#dc3545';
-  el.innerText = msg;
+  showAlert('telegram-alert', msg, isSuccess ? 'success' : 'error');
 }
 
 async function saveTelegramConfig() {
   const saveBtn = document.getElementById('btn-save-telegram');
   saveBtn.disabled = true;
-  saveBtn.innerText = 'Validating & Saving...';
+  saveBtn.textContent = 'Saving…';
 
-  const mode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
-  const token = document.getElementById('tg-bot-token').value.trim();
-  const apiId = document.getElementById('tg-api-id').value.trim();
-  const apiHash = document.getElementById('tg-api-hash').value.trim();
+  const mode         = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const token        = document.getElementById('tg-bot-token').value.trim();
+  const apiId        = document.getElementById('tg-api-id').value.trim();
+  const apiHash      = document.getElementById('tg-api-hash').value.trim();
   const cacheChannel = document.getElementById('tg-cache-channel').value.trim();
 
   const payload = {
-    mode: mode,
-    bot_token: token || undefined,
-    api_id: apiId ? parseInt(apiId, 10) : undefined,
-    api_hash: apiHash || undefined,
+    mode,
+    bot_token:        token || undefined,
+    api_id:           apiId ? parseInt(apiId, 10) : undefined,
+    api_hash:         apiHash || undefined,
     cache_channel_id: cacheChannel || undefined,
   };
 
   try {
     const res = await API.post('/api/telegram/save', payload);
-    showTelegramAlert(`✅ ${res.message}`, true);
+    showAlert('telegram-alert', res.message, 'success');
+    toastSuccess(res.message, 'Telegram Saved');
     document.getElementById('tg-bot-token').value = '';
-    document.getElementById('tg-api-hash').value = '';
+    document.getElementById('tg-api-hash').value  = '';
     await loadTelegramConfig();
   } catch (err) {
     if (err.message && err.message.includes('Conflict')) {
-      showTelegramAlert('⚠️ Conflict: Another Telegram configuration update is already in progress. Please retry in a few seconds.', false);
+      showAlert('telegram-alert', 'Conflict: Another configuration update is in progress. Retry in a few seconds.', 'warning');
     } else {
-      showTelegramAlert(`❌ Error: ${err.message}`, false);
+      showAlert('telegram-alert', `Error: ${err.message}`, 'error');
     }
   } finally {
-    saveBtn.disabled = false;
-    saveBtn.innerText = 'Save Telegram Configuration';
+    saveBtn.disabled    = false;
+    saveBtn.textContent = 'Save Configuration';
   }
 }
 
 async function testBotToken() {
-  const mode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const mode  = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
   const token = document.getElementById('tg-bot-token').value.trim();
   try {
-    const res = await API.post('/api/telegram/test-token', { bot_token: token || undefined, mode: mode });
-    alert(`✅ Bot Token Valid!\nBot: @${res.username} (${res.first_name})\nID: ${res.bot_id}\nEndpoint: ${res.endpoint}`);
+    const res = await API.post('/api/telegram/test-token', { bot_token: token || undefined, mode });
+    toastSuccess(`Bot: @${res.username} (${res.first_name}) · ID: ${res.bot_id}`, 'Token Valid');
   } catch (err) {
-    alert(`❌ Bot Token Test Failed:\n${err.message}`);
+    toastError(err.message, 'Token Test Failed');
   }
 }
 
 async function testLocalBotAPI() {
   try {
     const res = await API.post('/api/telegram/test-local-api', {});
-    alert(`✅ Local Bot API Server is reachable at ${res.host}:${res.port}!`);
+    toastSuccess(`Local Bot API reachable at ${res.host}:${res.port}`, 'Local API');
   } catch (err) {
-    alert(`❌ Local Bot API Test Failed:\n${err.message}`);
+    toastError(err.message, 'Local API Unreachable');
   }
 }
 
 async function testCacheChannel() {
-  const mode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
-  const token = document.getElementById('tg-bot-token').value.trim();
+  const mode      = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const token     = document.getElementById('tg-bot-token').value.trim();
   const channelId = document.getElementById('tg-cache-channel').value.trim();
   if (!channelId) {
-    alert('Please enter a Cache Channel ID to test.');
+    toastWarning('Please enter a Cache Channel ID to test');
     return;
   }
   try {
     const res = await API.post('/api/telegram/test-channel', {
       channel_id: channelId,
       bot_token: token || undefined,
-      mode: mode,
+      mode,
     });
-    alert(`✅ Cache Channel Access Verified!\nChannel ID: ${res.channel_id}`);
+    toastSuccess(`Cache channel access verified · ID: ${res.channel_id}`, 'Channel OK');
   } catch (err) {
-    alert(`❌ Cache Channel Test Failed:\n${err.message}`);
+    toastError(err.message, 'Channel Test Failed');
   }
 }
 
 function openMigrationModal(targetMode) {
   targetMigrationMode = targetMode;
-  const modal = document.getElementById('modal-migration');
-  const warn = document.getElementById('migration-warning');
-  const desc = document.getElementById('migration-desc');
+  const modal   = document.getElementById('modal-migration');
+  const warnEl  = document.getElementById('migration-warning-text');
+  const descEl  = document.getElementById('migration-desc');
 
   if (targetMode === 'local') {
-    warn.innerText = '⚠️ Caution: Migrating from Cloud to Local Bot API calls logOut() on Telegram Cloud. Returning to Cloud API is blocked by Telegram for 10 minutes following that operation.';
-    desc.innerText = 'This will log out the cloud session, verify Local Bot API server connectivity, and transition all polling and file uploads to the internal Local Bot API server (up to 2000 MB).';
+    if (warnEl) warnEl.textContent = 'Migrating from Cloud to Local Bot API calls logOut() on Telegram Cloud. Returning to Cloud API is blocked by Telegram for 10 minutes following that operation.';
+    if (descEl) descEl.textContent = 'This will log out the cloud session, verify Local Bot API server connectivity, and transition all polling and file uploads to the internal Local Bot API server (up to 2000 MB).';
   } else {
-    warn.innerText = '⚠️ Note: Cloud Bot API limits uploads to 50 MB. Local Bot API will enter standby mode.';
-    desc.innerText = 'This will transition the bot session to Telegram Cloud API (https://api.telegram.org). Any media file exceeding 50 MB will be rejected.';
+    if (warnEl) warnEl.textContent = 'Cloud Bot API limits uploads to 50 MB. Local Bot API will enter standby mode.';
+    if (descEl) descEl.textContent = 'This will transition the bot session to Telegram Cloud API (https://api.telegram.org). Any media file exceeding 50 MB will be rejected.';
   }
+
   modal.classList.add('active');
 }
 
 async function executeMigration() {
   const btn = document.getElementById('btn-confirm-migration');
-  btn.disabled = true;
-  btn.innerText = 'Migrating...';
+  btn.disabled    = true;
+  btn.textContent = 'Migrating…';
   try {
     const res = await API.post('/api/telegram/migrate', { target_mode: targetMigrationMode });
-    alert(`✅ Migration Complete!\n${res.message}`);
+    toastSuccess(res.message, 'Migration Complete');
     document.getElementById('modal-migration').classList.remove('active');
     await loadTelegramConfig();
   } catch (err) {
-    alert(`❌ Migration Failed:\n${err.message}`);
+    toastError(err.message, 'Migration Failed');
   } finally {
-    btn.disabled = false;
-    btn.innerText = 'Confirm & Migrate';
+    btn.disabled    = false;
+    btn.textContent = 'Confirm & Migrate';
   }
 }
 
@@ -814,21 +837,21 @@ async function saveMustJoinMessage() {
   const msg = document.getElementById('mj-custom-msg-area').value;
   try {
     await API.post('/api/must-join/message', { message: msg });
-    alert('✅ Custom Must-Join message saved successfully!');
+    toastSuccess('Custom Must-Join message saved', 'Saved');
   } catch (err) {
-    alert(`❌ Failed to save: ${err.message}`);
+    toastError(`Failed to save: ${err.message}`, 'Save Error');
   }
 }
 
 async function resetMustJoinMessage() {
-  if (confirm('Reset Must-Join template message to system default?')) {
-    try {
-      const res = await API.post('/api/must-join/message/reset', {});
-      document.getElementById('mj-custom-msg-area').value = res.message;
-      alert('✅ Reset to default template!');
-    } catch (err) {
-      alert(`❌ Failed to reset: ${err.message}`);
-    }
+  const confirmed = await showConfirm('Reset Must-Join template message to system default?', 'Reset Message', 'Reset', 'btn-warning');
+  if (!confirmed) return;
+  try {
+    const res = await API.post('/api/must-join/message/reset', {});
+    document.getElementById('mj-custom-msg-area').value = res.message;
+    toastSuccess('Reset to default template');
+  } catch (err) {
+    toastError(`Failed to reset: ${err.message}`, 'Reset Error');
   }
 }
 
@@ -838,73 +861,55 @@ async function resetMustJoinMessage() {
 
 async function loadWelcomeMessage() {
   try {
-    const res = await API.get('/api/telegram/welcome-message');
+    const res  = await API.get('/api/telegram/welcome-message');
     const area = document.getElementById('tg-welcome-msg-area');
-    if (area) {
-      area.value = res.message || '';
-    }
+    if (area) area.value = res.message || '';
   } catch (err) {
     console.error('Failed to load welcome message:', err);
   }
 }
 
 function showWelcomeAlert(msg, isSuccess = true) {
-  const el = document.getElementById('tg-welcome-alert');
-  if (!el) return;
-  el.style.display = 'block';
-  el.style.background = isSuccess ? 'rgba(40,167,69,0.15)' : 'rgba(220,53,69,0.15)';
-  el.style.border = isSuccess ? '1px solid #28a745' : '1px solid #dc3545';
-  el.style.color = isSuccess ? '#28a745' : '#dc3545';
-  el.innerText = msg;
+  showAlert('tg-welcome-alert', msg, isSuccess ? 'success' : 'error');
 }
 
 async function saveWelcomeMessage() {
-  const btn = document.getElementById('btn-save-welcome');
-  if (btn) {
-    btn.disabled = true;
-    btn.innerText = 'Validating & Saving...';
-  }
+  const btn  = document.getElementById('btn-save-welcome');
   const area = document.getElementById('tg-welcome-msg-area');
-  const msg = area ? area.value : '';
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   try {
-    const res = await API.post('/api/telegram/welcome-message', { message: msg });
-    if (area) {
-      area.value = res.message;
-    }
-    showWelcomeAlert('✅ Welcome message saved successfully!', true);
+    const res = await API.post('/api/telegram/welcome-message', { message: area ? area.value : '' });
+    if (area) area.value = res.message;
+    showWelcomeAlert('Welcome message saved successfully', true);
+    toastSuccess('Welcome message saved');
   } catch (err) {
-    showWelcomeAlert(`❌ Failed to save welcome message: ${err.message}`, false);
+    showWelcomeAlert(`Failed to save: ${err.message}`, false);
+    toastError(err.message, 'Save Failed');
   } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerText = 'Save Welcome Message';
-    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Welcome Message'; }
   }
 }
 
 async function resetWelcomeMessage() {
-  if (confirm('Reset /start welcome message to system default?')) {
-    const btn = document.getElementById('btn-reset-welcome');
-    if (btn) {
-      btn.disabled = true;
-      btn.innerText = 'Resetting...';
-    }
-    try {
-      const res = await API.post('/api/telegram/welcome-message/reset', {});
-      const area = document.getElementById('tg-welcome-msg-area');
-      if (area) {
-        area.value = res.message || '';
-      }
-      showWelcomeAlert('✅ Welcome message reset to default template!', true);
-    } catch (err) {
-      showWelcomeAlert(`❌ Failed to reset welcome message: ${err.message}`, false);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerText = 'Reset to Default';
-      }
-    }
+  const confirmed = await showConfirm('Reset /start welcome message to system default?', 'Reset Welcome Message', 'Reset', 'btn-warning');
+  if (!confirmed) return;
+
+  const btn  = document.getElementById('btn-reset-welcome');
+  const area = document.getElementById('tg-welcome-msg-area');
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
+
+  try {
+    const res = await API.post('/api/telegram/welcome-message/reset', {});
+    if (area) area.value = res.message || '';
+    showWelcomeAlert('Welcome message reset to default template', true);
+    toastSuccess('Welcome message reset to default');
+  } catch (err) {
+    showWelcomeAlert(`Failed to reset: ${err.message}`, false);
+    toastError(err.message, 'Reset Failed');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Reset to Default'; }
   }
 }
-

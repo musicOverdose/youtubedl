@@ -3,169 +3,371 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Telegram YouTube Downloader - Admin Panel</title>
+  <title>YTDL — Admin Panel</title>
   <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
 
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <span>⚡ YTDL Admin</span>
+<!-- Toast region -->
+<div id="toast-region" aria-live="polite" aria-label="Notifications"></div>
+
+<!-- Confirm dialog -->
+<div id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="confirm-box">
+    <div class="confirm-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
     </div>
-    <ul class="nav-links">
-      <li class="nav-item active" data-section="dashboard">📊 Dashboard</li>
-      <li class="nav-item" data-section="queue">⏳ Queue</li>
-      <li class="nav-item" data-section="jobs">📁 Jobs</li>
-      <li class="nav-item" data-section="cache">⚡ Cache</li>
-      <li class="nav-item" data-section="users">👥 Users</li>
-      <li class="nav-item" data-section="telegram">🤖 Telegram</li>
-      <li class="nav-item" data-section="must-join">🔒 Must Join</li>
-      <li class="nav-item" data-section="youtube">📺 YouTube</li>
-      <li class="nav-item" data-section="cookies">🍪 Cookies</li>
-      <li class="nav-item" data-section="ai">🤖 AI Translation</li>
-      <li class="nav-item" data-section="settings">⚙️ Settings</li>
-      <li class="nav-item" data-section="system">🖥️ System</li>
-      <li class="nav-item" data-section="logs">📝 Logs</li>
-      <li class="nav-item" data-section="audit">🛡️ Audit Log</li>
-    </ul>
-    <div class="sidebar-footer">
-      <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:8px;">
-        Logged in: <b id="admin-username-display" style="color:var(--text-primary);">admin</b>
+    <div class="confirm-title" id="confirm-title">Confirm Action</div>
+    <div class="confirm-message" id="confirm-message"></div>
+    <div class="confirm-actions">
+      <button class="btn btn-secondary" id="confirm-cancel">Cancel</button>
+      <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sidebar overlay (mobile) -->
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="shell">
+
+  <!-- ============================
+       Sidebar
+       ============================ -->
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <div class="sidebar-brand">
+      <svg class="sidebar-brand__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M22.54 6.42a2.78 2.78 0 0 0-1.95-1.96C18.88 4 12 4 12 4s-6.88 0-8.59.46A2.78 2.78 0 0 0 1.46 6.42C1 8.14 1 11.71 1 11.71s0 3.57.46 5.29a2.78 2.78 0 0 0 1.95 1.96C5.12 19.42 12 19.42 12 19.42s6.88 0 8.59-.46a2.78 2.78 0 0 0 1.96-1.96C23 15.28 23 11.71 23 11.71s0-3.57-.46-5.29z"/>
+        <polygon points="9.75 15.02 15.5 11.71 9.75 8.4 9.75 15.02"/>
+      </svg>
+      <div>
+        <div class="sidebar-brand__name">YTDL</div>
+        <span class="sidebar-brand__sub">Telegram Downloader</span>
       </div>
-      <button class="btn btn-secondary" id="btn-logout" style="width:100%;">Logout</button>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Sections">
+
+      <!-- Monitor -->
+      <div class="nav-group">
+        <div class="nav-group__label">Monitor</div>
+        <button class="nav-item active" data-section="dashboard" aria-current="page">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Dashboard
+        </button>
+        <button class="nav-item" data-section="queue">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Queue
+        </button>
+        <button class="nav-item" data-section="jobs">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Jobs
+        </button>
+        <button class="nav-item" data-section="cache">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          Cache
+        </button>
+        <button class="nav-item" data-section="logs">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+          Logs
+        </button>
+        <button class="nav-item" data-section="audit">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Audit Log
+        </button>
+      </div>
+
+      <!-- Users -->
+      <div class="nav-group">
+        <div class="nav-group__label">Users</div>
+        <button class="nav-item" data-section="users">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Users
+        </button>
+        <button class="nav-item" data-section="must-join">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Must Join
+        </button>
+      </div>
+
+      <!-- Configuration -->
+      <div class="nav-group">
+        <div class="nav-group__label">Configuration</div>
+        <button class="nav-item" data-section="telegram">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Telegram
+        </button>
+        <button class="nav-item" data-section="youtube">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.95-1.96C18.88 4 12 4 12 4s-6.88 0-8.59.46A2.78 2.78 0 0 0 1.46 6.42C1 8.14 1 11.71 1 11.71s0 3.57.46 5.29a2.78 2.78 0 0 0 1.95 1.96C5.12 19.42 12 19.42 12 19.42s6.88 0 8.59-.46a2.78 2.78 0 0 0 1.96-1.96C23 15.28 23 11.71 23 11.71s0-3.57-.46-5.29z"/><polygon points="9.75 15.02 15.5 11.71 9.75 8.4 9.75 15.02"/></svg>
+          YouTube
+        </button>
+        <button class="nav-item" data-section="cookies">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 14v.01"/></svg>
+          Cookies
+        </button>
+        <button class="nav-item" data-section="ai">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          AI Translation
+        </button>
+        <button class="nav-item" data-section="settings">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 1.87 15.28M4.93 4.93A10 10 0 0 0 3.06 20.21"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          Settings
+        </button>
+        <button class="nav-item" data-section="system">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          System
+        </button>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="sidebar-user__avatar" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="sidebar-user__info">
+          <div class="sidebar-user__name" id="admin-username-display">admin</div>
+          <div class="sidebar-user__role">Administrator</div>
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-full" id="btn-logout" aria-label="Sign out">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </button>
     </div>
   </aside>
 
-  <!-- Main Content Wrapper -->
-  <div class="main-wrapper">
-    <header class="top-bar">
-      <h2 id="page-title">Management Dashboard</h2>
-      <div style="display:flex; align-items:center; gap:15px;">
-        <span class="badge badge-success">VPS Optimized (2 Cores / 4GB)</span>
+  <!-- ============================
+       Main
+       ============================ -->
+  <div class="main-area">
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="flex items-center gap-3">
+        <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="topbar__title" id="page-title">Dashboard</span>
+      </div>
+      <div class="topbar__right">
+        <span class="badge badge-accent">VPS · 2 Core / 4 GB</span>
       </div>
     </header>
 
-    <main class="content-body">
+    <!-- Content -->
+    <main class="content-body" id="content-body">
 
-      <!-- 1. DASHBOARD -->
-      <section id="sec-dashboard" class="section active">
+      <!-- ================================================
+           1. DASHBOARD
+           ================================================ -->
+      <section id="sec-dashboard" class="section active" aria-label="Dashboard">
+
+        <!-- System stats -->
         <div class="grid-4">
           <div class="card">
-            <div class="card-title">CPU Usage</div>
-            <div class="card-val" id="stat-cpu">0%</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              CPU Usage
+            </div>
+            <div class="stat-card__value" id="stat-cpu">—</div>
           </div>
           <div class="card">
-            <div class="card-title">RAM Usage</div>
-            <div class="card-val" id="stat-ram">0 / 4 GB</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+              RAM Usage
+            </div>
+            <div class="stat-card__value" id="stat-ram">—</div>
           </div>
           <div class="card">
-            <div class="card-title">Disk Storage</div>
-            <div class="card-val" id="stat-disk">0 / 80 GB</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              Disk Storage
+            </div>
+            <div class="stat-card__value" id="stat-disk">—</div>
           </div>
           <div class="card">
-            <div class="card-title">Temporary Storage</div>
-            <div class="card-val" id="stat-temp">0 GB</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              Temp Storage
+            </div>
+            <div class="stat-card__value" id="stat-temp">—</div>
           </div>
         </div>
 
+        <!-- Queue stats -->
         <div class="grid-4">
           <div class="card">
-            <div class="card-title">Active Jobs</div>
-            <div class="card-val" id="stat-active-jobs">0 / 1</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Active Jobs
+            </div>
+            <div class="stat-card__value" id="stat-active-jobs">0 / 1</div>
           </div>
           <div class="card">
-            <div class="card-title">Queue Length</div>
-            <div class="card-val" id="stat-queue-len">0</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              Queue Length
+            </div>
+            <div class="stat-card__value" id="stat-queue-len">0</div>
           </div>
           <div class="card">
-            <div class="card-title">Cache Entries</div>
-            <div class="card-val" id="stat-cache-entries">0</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              Cache Entries
+            </div>
+            <div class="stat-card__value" id="stat-cache-entries">0</div>
           </div>
           <div class="card">
-            <div class="card-title">Cache Hit Rate</div>
-            <div class="card-val" id="stat-cache-hitrate">0%</div>
+            <div class="stat-card__label">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              Cache Hit Rate
+            </div>
+            <div class="stat-card__value" id="stat-cache-hitrate">0%</div>
           </div>
         </div>
 
+        <!-- Operational status & versions -->
         <div class="grid-2">
           <div class="card">
-            <h3 style="margin-bottom:15px;">Operational Status</h3>
-            <p style="margin-bottom:8px;">Max Video Duration: <b id="stat-max-dur">02:00:00</b></p>
-            <p style="margin-bottom:8px;">AI Translation: <b id="stat-ai-status">OFF</b></p>
-            <p style="margin-bottom:8px;">YouTube Cookies: <b id="stat-cookie-status">OFF</b></p>
-            <p style="margin-bottom:8px;">Must Join Channel: <b id="stat-mj-status">OFF</b></p>
-            <p style="margin-bottom:8px;">Completed Jobs: <b id="stat-completed">0</b> | Failed Jobs: <b id="stat-failed">0</b></p>
+            <div class="card__header">
+              <div class="card__title">Operational Status</div>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Max Video Duration</span>
+              <span class="info-row__val bold" id="stat-max-dur">02:00:00</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">AI Translation</span>
+              <span class="info-row__val" id="stat-ai-status">OFF</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">YouTube Cookies</span>
+              <span class="info-row__val" id="stat-cookie-status">OFF</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Must-Join Enforcement</span>
+              <span class="info-row__val" id="stat-mj-status">OFF</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Completed Jobs</span>
+              <span class="info-row__val bold text-success" id="stat-completed">0</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Failed Jobs</span>
+              <span class="info-row__val bold text-danger" id="stat-failed">0</span>
+            </div>
           </div>
 
           <div class="card">
-            <h3 style="margin-bottom:15px;">Component Stack Versions</h3>
-            <p style="margin-bottom:8px;">Application: <b id="v-app">1.0.0</b></p>
-            <p style="margin-bottom:8px;">Python: <b id="v-py">-</b></p>
-            <p style="margin-bottom:8px;">yt-dlp: <b id="v-ytdlp">-</b></p>
-            <p style="margin-bottom:8px;">yt-dlp-ejs: <b id="v-ejs">-</b></p>
-            <p style="margin-bottom:8px;">FFmpeg: <b id="v-ffmpeg">-</b></p>
-            <p style="margin-bottom:8px;">Deno JS Runtime: <b id="v-deno">-</b></p>
-          </div>
-        </div>
-      </section>
-
-      <!-- 2. QUEUE -->
-      <section id="sec-queue" class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-          <h3>Active & Queued Media Jobs</h3>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <button class="btn btn-warning" id="btn-queue-pause" onclick="toggleQueuePause()">⏸ Pause Queue</button>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <label style="margin:0;">Max Concurrency:</label>
-              <input type="number" id="queue-max-active-input" min="1" max="8" style="width:70px; padding:6px 10px;">
-              <button class="btn btn-primary" onclick="updateConcurrency()">Save</button>
+            <div class="card__header">
+              <div class="card__title">Component Stack Versions</div>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Application</span>
+              <span class="info-row__val font-mono" id="v-app">1.0.0</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Python</span>
+              <span class="info-row__val font-mono" id="v-py">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">yt-dlp</span>
+              <span class="info-row__val font-mono" id="v-ytdlp">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">yt-dlp-ejs</span>
+              <span class="info-row__val font-mono" id="v-ejs">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">FFmpeg</span>
+              <span class="info-row__val font-mono" id="v-ffmpeg">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Deno JS Runtime</span>
+              <span class="info-row__val font-mono" id="v-deno">—</span>
             </div>
           </div>
         </div>
+      </section>
 
-        <h4 style="color:var(--text-secondary); margin-top:20px;">ACTIVE PROCESSING JOBS</h4>
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Job ID</th>
-                <th>Title</th>
-                <th>Operation</th>
-                <th>Stage</th>
-                <th>Progress & Speed</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-active-jobs"></tbody>
-          </table>
+      <!-- ================================================
+           2. QUEUE
+           ================================================ -->
+      <section id="sec-queue" class="section" aria-label="Queue">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Processing Queue</div>
+            <div class="section-sub">Live view of active and waiting media jobs</div>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-warning" id="btn-queue-pause" onclick="toggleQueuePause()">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Pause Queue
+            </button>
+            <label class="flex items-center gap-2 font-sm text-secondary" style="white-space:nowrap; margin:0;">
+              Max Concurrency:
+              <input type="number" id="queue-max-active-input" min="1" max="8" style="width:64px;">
+            </label>
+            <button class="btn btn-secondary" onclick="updateConcurrency()">Apply</button>
+          </div>
         </div>
 
-        <h4 style="color:var(--text-secondary); margin-top:25px;">WAITING IN QUEUE (FIFO)</h4>
+        <div class="table-container mb-5">
+          <div class="table-toolbar">
+            <span class="table-toolbar__title">Active Processing Jobs</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job ID</th>
+                  <th>Title</th>
+                  <th>Operation</th>
+                  <th>Stage</th>
+                  <th>Progress</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-active-jobs"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Position</th>
-                <th>Job ID</th>
-                <th>Title</th>
-                <th>Operation</th>
-                <th>Queued At</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-queued-jobs"></tbody>
-          </table>
+          <div class="table-toolbar">
+            <span class="table-toolbar__title">Waiting in Queue (FIFO)</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Position</th>
+                  <th>Job ID</th>
+                  <th>Title</th>
+                  <th>Operation</th>
+                  <th>Queued At</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-queued-jobs"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
-      <!-- 3. JOBS -->
-      <section id="sec-jobs" class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-          <h3>Job History</h3>
-          <div style="display:flex; gap:10px;">
-            <input type="text" id="jobs-search" placeholder="Search title or ID..." onkeyup="loadJobs()" style="width:250px;">
-            <select id="jobs-filter-status" onchange="loadJobs()" style="width:150px;">
+      <!-- ================================================
+           3. JOBS
+           ================================================ -->
+      <section id="sec-jobs" class="section" aria-label="Job history">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Job History</div>
+            <div class="section-sub">Completed, failed and cancelled media jobs</div>
+          </div>
+          <div class="section-actions">
+            <input type="text" id="jobs-search" placeholder="Search title or ID…" onkeyup="loadJobs()" style="width:220px;" aria-label="Search jobs">
+            <select id="jobs-filter-status" onchange="loadJobs()" style="width:140px;" aria-label="Filter by status">
               <option value="">All Statuses</option>
               <option value="COMPLETED">Completed</option>
               <option value="FAILED">Failed</option>
@@ -176,257 +378,353 @@
         </div>
 
         <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Job ID</th>
-                <th>Title</th>
-                <th>Format</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Completed</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-jobs"></tbody>
-          </table>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job ID</th>
+                  <th>Title</th>
+                  <th>Format</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Completed</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-jobs"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
-      <!-- 4. CACHE -->
-      <section id="sec-cache" class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-          <h3>Private Telegram Channel Media Cache</h3>
-          <input type="text" id="cache-search" placeholder="Search title or ID..." onkeyup="loadCache()" style="width:280px;">
-        </div>
-
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Source ID</th>
-                <th>Title</th>
-                <th>Format</th>
-                <th>Hit Count</th>
-                <th>File Size</th>
-                <th>Cache Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-cache"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- 5. USERS -->
-      <section id="sec-users" class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-          <h3>Telegram Users Management</h3>
-          <input type="text" id="users-search" placeholder="Search username or ID..." onkeyup="loadUsers()" style="width:250px;">
-        </div>
-
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Telegram ID</th>
-                <th>User</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Total Jobs</th>
-                <th>Last Active</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-users"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- 6. MUST JOIN -->
-      <section id="sec-must-join" class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-          <h3>Must-Join Channel Enforcement</h3>
-          <div style="display:flex; gap:10px;">
-            <button class="btn btn-secondary" id="btn-mj-toggle" onclick="toggleMustJoin()">Must Join: OFF</button>
-            <button class="btn btn-primary" onclick="document.getElementById('modal-add-channel').classList.add('active')">+ Add Channel</button>
+      <!-- ================================================
+           4. CACHE
+           ================================================ -->
+      <section id="sec-cache" class="section" aria-label="Cache">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Media Cache</div>
+            <div class="section-sub">Private Telegram channel cached media records</div>
+          </div>
+          <div class="section-actions">
+            <input type="text" id="cache-search" placeholder="Search title or ID…" onkeyup="loadCache()" style="width:240px;" aria-label="Search cache">
           </div>
         </div>
 
         <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Chat ID</th>
-                <th>Title</th>
-                <th>Username / Invite</th>
-                <th>Bot Admin Status</th>
-                <th>Enabled</th>
-                <th>Last Verified</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-must-join"></tbody>
-          </table>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source ID</th>
+                  <th>Title</th>
+                  <th>Format</th>
+                  <th>Hit Count</th>
+                  <th>File Size</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-cache"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================
+           5. USERS
+           ================================================ -->
+      <section id="sec-users" class="section" aria-label="Users">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Telegram Users</div>
+            <div class="section-sub">Manage bot user access and permissions</div>
+          </div>
+          <div class="section-actions">
+            <input type="text" id="users-search" placeholder="Search username or ID…" onkeyup="loadUsers()" style="width:230px;" aria-label="Search users">
+          </div>
         </div>
 
-        <!-- Customizable Must-Join Message Card -->
-        <div class="card" style="margin-top:25px;">
-          <h3 style="margin-bottom:12px;">Customizable Must-Join Template</h3>
-          <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">
+        <div class="table-container">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Telegram ID</th>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Total Jobs</th>
+                  <th>Last Active</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-users"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================
+           6. MUST JOIN
+           ================================================ -->
+      <section id="sec-must-join" class="section" aria-label="Must Join">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Must-Join Enforcement</div>
+            <div class="section-sub">Require users to join channels before using the bot</div>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-secondary" id="btn-mj-toggle" onclick="toggleMustJoin()">Must Join: DISABLED</button>
+            <button class="btn btn-primary" onclick="document.getElementById('modal-add-channel').classList.add('active')">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Channel
+            </button>
+          </div>
+        </div>
+
+        <div class="table-container mb-5">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Chat ID</th>
+                  <th>Title</th>
+                  <th>Username / Invite</th>
+                  <th>Bot Status</th>
+                  <th>Enabled</th>
+                  <th>Last Verified</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-must-join"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Custom must-join message -->
+        <div class="card max-w-md">
+          <div class="card__header">
+            <div class="card__title">Customizable Must-Join Template</div>
+          </div>
+          <p class="font-sm text-secondary mb-3">
             Dynamic placeholders: <code>{first_name}</code> for subscriber's name, <code>{channel_list}</code> for list of missing channels.
           </p>
           <div class="form-group">
-            <textarea id="mj-custom-msg-area" style="min-height:100px; font-family:inherit;"></textarea>
+            <label for="mj-custom-msg-area">Message Template:</label>
+            <textarea id="mj-custom-msg-area" placeholder="Enter must-join message template…" rows="5"></textarea>
           </div>
-          <div style="display:flex; gap:10px;">
-            <button class="btn btn-primary" onclick="saveMustJoinMessage()">Save Custom Message</button>
+          <div class="flex gap-2">
+            <button class="btn btn-primary" onclick="saveMustJoinMessage()">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Message
+            </button>
             <button class="btn btn-secondary" onclick="resetMustJoinMessage()">Reset to Default</button>
           </div>
         </div>
       </section>
 
-      <!-- TELEGRAM CONFIGURATION -->
-      <section id="sec-telegram" class="section">
+      <!-- ================================================
+           7. TELEGRAM
+           ================================================ -->
+      <section id="sec-telegram" class="section" aria-label="Telegram configuration">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Telegram Configuration</div>
+            <div class="section-sub">Bot API settings, architecture mode and live status</div>
+          </div>
+        </div>
+
         <div class="grid-2">
-          <!-- Main Form Card -->
+          <!-- Form card -->
           <div class="card">
-            <h3 style="margin-bottom:15px;">Telegram Architecture & API Settings</h3>
-            <div id="telegram-alert" style="display:none; padding:10px 14px; border-radius:var(--radius); margin-bottom:15px; font-size:0.9rem;"></div>
+            <div class="card__header">
+              <div class="card__title">API Architecture &amp; Credentials</div>
+            </div>
 
-            <!-- Mode Selector -->
-            <div class="form-group" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:var(--radius);">
-              <label style="font-weight:600; margin-bottom:8px;">Telegram API Operating Mode:</label>
-              <div style="display:flex; flex-direction:column; gap:8px;">
-                <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+            <!-- Inline alert -->
+            <div class="alert-strip hidden" id="telegram-alert" role="alert"></div>
+
+            <!-- Mode selector -->
+            <div class="form-group">
+              <label>Operating Mode:</label>
+              <div class="radio-group">
+                <label class="radio-option">
                   <input type="radio" name="tg-mode-radio" value="local" checked onchange="onTelegramModeChange()">
-                  <span><b>Local Bot API Server</b> (Standard Production - Up to 2000 MB Uploads)</span>
+                  <div>
+                    <div class="radio-option__label">Local Bot API Server</div>
+                    <div class="radio-option__desc">Standard production — up to 2000 MB file uploads</div>
+                  </div>
                 </label>
-                <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+                <label class="radio-option">
                   <input type="radio" name="tg-mode-radio" value="cloud" onchange="onTelegramModeChange()">
-                  <span><b>Cloud Bot API</b> (Diagnostic / Fallback - 50 MB Upload Limit)</span>
+                  <div>
+                    <div class="radio-option__label">Cloud Bot API</div>
+                    <div class="radio-option__desc">Diagnostic / fallback — 50 MB upload limit</div>
+                  </div>
                 </label>
               </div>
             </div>
 
-            <!-- Derived Endpoint -->
+            <!-- Derived endpoint -->
             <div class="form-group">
-              <label>Derived Bot API Endpoint:</label>
-              <input type="text" id="tg-derived-endpoint" value="http://telegram-bot-api:8081" readonly style="background:rgba(0,0,0,0.3); color:var(--text-secondary);">
+              <label for="tg-derived-endpoint">Derived Bot API Endpoint:</label>
+              <input type="text" id="tg-derived-endpoint" value="http://telegram-bot-api:8081" readonly aria-readonly="true">
             </div>
 
-            <!-- Bot Token Input with Show/Hide -->
+            <!-- Bot token -->
             <div class="form-group">
-              <label>Bot API Token (from @BotFather):</label>
-              <div style="display:flex; gap:8px;">
-                <input type="password" id="tg-bot-token" placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ" style="flex:1;">
-                <button type="button" class="btn btn-secondary" onclick="toggleInputMask('tg-bot-token')">👁️</button>
+              <label for="tg-bot-token">Bot API Token:</label>
+              <div class="input-with-btn">
+                <input type="password" id="tg-bot-token" placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ" autocomplete="off">
+                <button type="button" class="btn btn-secondary btn-icon" onclick="toggleInputMask('tg-bot-token')" aria-label="Toggle token visibility">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
               </div>
-              <small style="color:var(--text-secondary);">Current Active Token: <span id="tg-token-masked-display">Not Set</span></small>
+              <div class="field-hint">Current active token: <span id="tg-token-masked-display" class="font-mono">Not Set</span></div>
             </div>
 
-            <!-- Local Mode Credentials Section -->
+            <!-- Local credentials (API ID / hash) -->
             <div id="tg-local-credentials-group">
               <div class="form-group">
-                <label>Telegram API ID (numeric, from my.telegram.org):</label>
+                <label for="tg-api-id">Telegram API ID (from my.telegram.org):</label>
                 <input type="number" id="tg-api-id" placeholder="12345678">
-                <small style="color:var(--text-secondary);">Current Active ID: <span id="tg-id-display">Not Set</span></small>
+                <div class="field-hint">Current active ID: <span id="tg-id-display" class="font-mono">Not Set</span></div>
               </div>
 
               <div class="form-group">
-                <label>Telegram API Hash (32 hex characters, from my.telegram.org):</label>
-                <div style="display:flex; gap:8px;">
-                  <input type="password" id="tg-api-hash" placeholder="0123456789abcdef0123456789abcdef" style="flex:1;">
-                  <button type="button" class="btn btn-secondary" onclick="toggleInputMask('tg-api-hash')">👁️</button>
+                <label for="tg-api-hash">Telegram API Hash (32 hex chars):</label>
+                <div class="input-with-btn">
+                  <input type="password" id="tg-api-hash" placeholder="0123456789abcdef0123456789abcdef" autocomplete="off">
+                  <button type="button" class="btn btn-secondary btn-icon" onclick="toggleInputMask('tg-api-hash')" aria-label="Toggle hash visibility">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
                 </div>
-                <small style="color:var(--text-secondary);">Current Active Hash: <span id="tg-hash-masked-display">Not Set</span></small>
+                <div class="field-hint">Current active hash: <span id="tg-hash-masked-display" class="font-mono">Not Set</span></div>
               </div>
             </div>
 
-            <!-- Cache Channel ID -->
+            <!-- Cache channel -->
             <div class="form-group">
-              <label>Private Cache Channel ID (e.g. -1001234567890):</label>
+              <label for="tg-cache-channel">Private Cache Channel ID:</label>
               <input type="text" id="tg-cache-channel" placeholder="-1001234567890">
             </div>
 
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:20px;">
-              <button class="btn btn-primary" id="btn-save-telegram" onclick="saveTelegramConfig()">Save Telegram Configuration</button>
+            <div class="flex gap-2" style="flex-wrap:wrap; margin-top: var(--sp-4);">
+              <button class="btn btn-primary" id="btn-save-telegram" onclick="saveTelegramConfig()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Save Configuration
+              </button>
               <button class="btn btn-secondary" onclick="testBotToken()">Test Token</button>
-              <button class="btn btn-secondary" id="btn-test-local-api" onclick="testLocalBotAPI()">Test Local Bot API</button>
-              <button class="btn btn-secondary" onclick="testCacheChannel()">Test Cache Channel</button>
+              <button class="btn btn-secondary" id="btn-test-local-api" onclick="testLocalBotAPI()">Test Local API</button>
+              <button class="btn btn-secondary" onclick="testCacheChannel()">Test Channel</button>
             </div>
           </div>
 
-          <!-- Status & Telemetry Card -->
+          <!-- Status & telemetry card -->
           <div class="card">
-            <h3 style="margin-bottom:15px;">Telegram Live Status & Telemetry</h3>
-            
-            <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;">
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
-                <span>Bot Identity & Health:</span>
-                <span id="badge-tg-bot" class="badge badge-danger">🔴 Disconnected</span>
+            <div class="card__header">
+              <div class="card__title">Live Status &amp; Telemetry</div>
+              <span class="badge badge-secondary font-mono" id="stat-tg-version">v1</span>
+            </div>
+
+            <div class="mb-4">
+              <div class="info-row">
+                <span class="info-row__key">Bot Identity &amp; Health</span>
+                <span id="badge-tg-bot" class="badge badge-danger">
+                  <span class="dot dot-danger"></span>Not Configured
+                </span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
-                <span>Active API Mode:</span>
+              <div class="info-row">
+                <span class="info-row__key">Active API Mode</span>
                 <span id="badge-tg-mode" class="badge badge-info">Local</span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
-                <span>Local Bot API Gateway:</span>
-                <span id="badge-tg-local" class="badge badge-warning">Probing...</span>
-              </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
-                <span>Configuration Version:</span>
-                <span id="stat-tg-version" style="font-weight:bold;">v1</span>
+              <div class="info-row">
+                <span class="info-row__key">Local Bot API Gateway</span>
+                <span id="badge-tg-local" class="badge badge-warning">
+                  <span class="dot dot-warning"></span>Probing…
+                </span>
               </div>
             </div>
 
-            <h4 style="margin-bottom:10px; color:var(--text-secondary);">Isolated Storage Telemetry (Service-Reported)</h4>
-            <div style="display:flex; flex-direction:column; gap:8px; font-size:0.9rem; margin-bottom:20px;">
-              <div>Worker Staging (<code>/transfer</code>): <b id="stat-transfer-usage">0 MB</b></div>
-              <div>Worker Scratch (<code>/tmp/ytdl</code>): <b id="stat-worker-temp">0 MB</b></div>
-              <div>Local Bot API Data (<code>/var/lib/telegram-bot-api</code>): <b id="stat-botapi-data">0 MB</b></div>
-              <div>Host Filesystem Free Space: <b id="stat-host-free">0 GB</b></div>
+            <hr class="card-divider">
+            <div class="card__title mb-3" style="font-size:0.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">Isolated Storage Telemetry</div>
+
+            <div class="info-row">
+              <span class="info-row__key">Worker Staging (<code>/transfer</code>)</span>
+              <span class="info-row__val font-mono" id="stat-transfer-usage">0 MB</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Worker Scratch (<code>/tmp/ytdl</code>)</span>
+              <span class="info-row__val font-mono" id="stat-worker-temp">0 MB</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Local Bot API Data</span>
+              <span class="info-row__val font-mono" id="stat-botapi-data">0 MB</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Host Free Space</span>
+              <span class="info-row__val font-mono" id="stat-host-free">0 GB</span>
             </div>
 
-            <div style="border-top:1px solid var(--border-color); padding-top:15px; margin-top:10px;">
-              <h4 style="margin-bottom:10px;">Explicit Mode Migration</h4>
-              <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">
-                Safely migrate the active bot session between Local and Cloud Bot API servers with graceful logout handling.
-              </p>
-              <div style="display:flex; gap:10px;">
-                <button class="btn btn-warning" onclick="openMigrationModal('local')">Migrate to Local Bot API</button>
-                <button class="btn btn-secondary" onclick="openMigrationModal('cloud')">Migrate to Cloud Bot API</button>
-              </div>
+            <hr class="card-divider">
+            <div class="card__title mb-2">Mode Migration</div>
+            <p class="font-sm text-secondary mb-3">Safely migrate the active bot session between Local and Cloud Bot API servers with graceful logout handling.</p>
+            <div class="flex gap-2">
+              <button class="btn btn-warning" onclick="openMigrationModal('local')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Migrate to Local
+              </button>
+              <button class="btn btn-secondary" onclick="openMigrationModal('cloud')">Migrate to Cloud</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Welcome message (full-width) -->
+        <div class="card mt-4">
+          <div class="card__header">
+            <div>
+              <div class="card__title">Telegram /start Welcome Message</div>
+              <div class="card__sub">HTML template sent when users invoke /start. Supports Telegram HTML parse mode.</div>
             </div>
           </div>
 
-          <!-- Welcome Message Card -->
-          <div class="card" style="grid-column: 1 / -1; margin-top: 20px;">
-            <h3 style="margin-bottom:15px;">Telegram /start Welcome Message</h3>
-            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">
-              Customize the welcome message sent when users send <code>/start</code> to the bot.
-              Supports Telegram HTML formatting (<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, <code>&lt;a href="..."&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;u&gt;</code>, <code>&lt;spoiler&gt;</code>).
-              Use placeholder <code>{first_name}</code> to interpolate the user's Telegram display name.
-            </p>
-            <div id="tg-welcome-alert" style="display:none; padding:10px 14px; border-radius:var(--radius); margin-bottom:15px; font-size:0.9rem;"></div>
-            <div class="form-group">
-              <label>Welcome Message Template (HTML):</label>
-              <textarea id="tg-welcome-msg-area" style="min-height:140px; font-family:inherit; line-height:1.4; width:100%;" placeholder="Enter welcome message template..."></textarea>
-            </div>
-            <div style="display:flex; gap:10px;">
-              <button class="btn btn-primary" id="btn-save-welcome" onclick="saveWelcomeMessage()">Save Welcome Message</button>
-              <button class="btn btn-secondary" id="btn-reset-welcome" onclick="resetWelcomeMessage()">Reset to Default</button>
-            </div>
+          <div class="alert-strip hidden mb-4" id="tg-welcome-alert" role="alert"></div>
+
+          <p class="font-sm text-secondary mb-3">
+            Supported tags: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;u&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;code&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href="…"&gt;</code>, <code>&lt;blockquote&gt;</code>, <code>&lt;span class="tg-spoiler"&gt;</code>.
+            Use <code>{first_name}</code> to interpolate the user's display name.
+          </p>
+
+          <div class="form-group">
+            <label for="tg-welcome-msg-area">Message Template (Telegram HTML):</label>
+            <textarea id="tg-welcome-msg-area" placeholder="Enter welcome message HTML template…" rows="7"></textarea>
+          </div>
+
+          <div class="flex gap-2">
+            <button class="btn btn-primary" id="btn-save-welcome" onclick="saveWelcomeMessage()">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Welcome Message
+            </button>
+            <button class="btn btn-secondary" id="btn-reset-welcome" onclick="resetWelcomeMessage()">Reset to Default</button>
           </div>
         </div>
       </section>
 
-      <!-- 7. YOUTUBE SETTINGS -->
-      <section id="sec-youtube" class="section">
-        <div class="card" style="max-width:600px;">
-          <h3 style="margin-bottom:20px;">YouTube General Settings</h3>
+      <!-- ================================================
+           8. YOUTUBE SETTINGS
+           ================================================ -->
+      <section id="sec-youtube" class="section" aria-label="YouTube settings">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">YouTube Settings</div>
+            <div class="section-sub">Download quality, codec options and playlist control</div>
+          </div>
+        </div>
+
+        <div class="card max-w-md">
           <div class="form-group">
-            <label>Default Maximum Source Resolution:</label>
+            <label for="yt-max-height">Default Maximum Source Resolution:</label>
             <select id="yt-max-height">
               <option value="2160">2160p (4K)</option>
               <option value="1440">1440p (2K)</option>
@@ -436,230 +734,390 @@
             </select>
           </div>
           <div class="form-group">
-            <label><input type="checkbox" id="yt-playlists-toggle"> Allow YouTube Playlists (Disabled by default to prevent queue flood)</label>
+            <label class="inline">
+              <input type="checkbox" id="yt-playlists-toggle">
+              Allow YouTube Playlists
+            </label>
+            <div class="field-hint">Disabled by default to prevent queue flood</div>
           </div>
           <div class="form-group">
-            <label><input type="checkbox" id="yt-h264-toggle" checked> H.264 / AAC Codec Enabled</label>
+            <label class="inline">
+              <input type="checkbox" id="yt-h264-toggle" checked>
+              H.264 / AAC Codec Enabled
+            </label>
           </div>
           <div class="form-group">
-            <label><input type="checkbox" id="yt-h265-toggle" checked> H.265 / AAC Codec Enabled</label>
+            <label class="inline">
+              <input type="checkbox" id="yt-h265-toggle" checked>
+              H.265 / AAC Codec Enabled
+            </label>
           </div>
           <div class="form-group">
-            <label><input type="checkbox" id="yt-mp3-toggle" checked> MP3 Audio Downloads Enabled</label>
+            <label class="inline">
+              <input type="checkbox" id="yt-mp3-toggle" checked>
+              MP3 Audio Downloads Enabled
+            </label>
           </div>
           <div class="form-group">
-            <label><input type="checkbox" id="yt-subs-toggle" checked> Subtitle Extraction Enabled</label>
+            <label class="inline">
+              <input type="checkbox" id="yt-subs-toggle" checked>
+              Subtitle Extraction Enabled
+            </label>
           </div>
-          <button class="btn btn-primary" onclick="saveGlobalSettings(event)">Save YouTube Settings</button>
+          <button class="btn btn-primary" onclick="saveGlobalSettings(event)">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save YouTube Settings
+          </button>
         </div>
       </section>
 
-      <!-- 8. COOKIES -->
-      <section id="sec-cookies" class="section">
+      <!-- ================================================
+           9. COOKIES
+           ================================================ -->
+      <section id="sec-cookies" class="section" aria-label="YouTube cookies">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">YouTube Cookies</div>
+            <div class="section-sub">Authenticate with YouTube to access age-restricted or private content</div>
+          </div>
+        </div>
+
         <div class="grid-2">
           <div class="card">
-            <h3 style="margin-bottom:15px;">YouTube Cookies Status</h3>
-            <p style="margin-bottom:10px;">Status: <b id="cookie-configured-val">Not Configured</b></p>
-            <p style="margin-bottom:10px;">Parsed Valid Cookies: <b id="cookie-count-val">0</b></p>
-            <p style="margin-bottom:15px;">Last Updated: <b id="cookie-updated-val">Never</b></p>
-
-            <div style="display:flex; gap:10px; margin-top:20px;">
-              <button class="btn btn-secondary" id="btn-cookie-toggle" onclick="toggleCookies()">YouTube Cookies: OFF</button>
+            <div class="card__header">
+              <div class="card__title">Cookie Status</div>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Configured</span>
+              <span class="info-row__val" id="cookie-configured-val">Not Configured</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Parsed Valid Cookies</span>
+              <span class="info-row__val font-mono" id="cookie-count-val">0</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Last Updated</span>
+              <span class="info-row__val" id="cookie-updated-val">Never</span>
+            </div>
+            <div class="flex gap-2 mt-4">
+              <button class="btn btn-secondary" id="btn-cookie-toggle" onclick="toggleCookies()">Cookies: OFF</button>
               <button class="btn btn-primary" onclick="testCookiesSubmit()">Test Cookies</button>
-              <button class="btn btn-danger" onclick="deleteCookiesFile()">Delete</button>
+              <button class="btn btn-danger" onclick="deleteCookiesFile()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                Delete
+              </button>
             </div>
           </div>
 
           <div class="card">
-            <h3 style="margin-bottom:15px;">Paste cookies.txt Content</h3>
+            <div class="card__header">
+              <div class="card__title">Paste cookies.txt Content</div>
+            </div>
             <form onsubmit="pasteCookiesSubmit(event)">
               <div class="form-group">
-                <textarea id="cookie-paste-area" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;1780000000&#9;VISITOR_INFO1_LIVE&#9;..."></textarea>
+                <label for="cookie-paste-area">Netscape cookie file content:</label>
+                <textarea id="cookie-paste-area" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;1780000000&#9;..." rows="7"></textarea>
               </div>
-              <button type="submit" class="btn btn-primary">Validate & Save Cookies</button>
+              <button type="submit" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Validate &amp; Save Cookies
+              </button>
             </form>
           </div>
         </div>
       </section>
 
-      <!-- 9. AI TRANSLATION -->
-      <section id="sec-ai" class="section">
-        <div class="card" style="max-width:650px;">
-          <h3 style="margin-bottom:20px;">AI Subtitle Translation Settings</h3>
+      <!-- ================================================
+           10. AI TRANSLATION
+           ================================================ -->
+      <section id="sec-ai" class="section" aria-label="AI translation">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">AI Subtitle Translation</div>
+            <div class="section-sub">OpenAI-compatible Persian subtitle translation configuration</div>
+          </div>
+        </div>
+
+        <div class="card max-w-md">
           <form onsubmit="saveAISettings(event)">
             <div class="form-group">
-              <label><input type="checkbox" id="ai-enabled-toggle"> Enable Persian AI Subtitle Translation</label>
+              <label class="inline">
+                <input type="checkbox" id="ai-enabled-toggle">
+                Enable Persian AI Subtitle Translation
+              </label>
             </div>
             <div class="form-group">
-              <label>API Provider:</label>
+              <label for="ai-provider">API Provider:</label>
               <input type="text" id="ai-provider" value="openai">
             </div>
             <div class="form-group">
-              <label>API Base URL (OpenAI-compatible):</label>
+              <label for="ai-base-url">API Base URL (OpenAI-compatible):</label>
               <input type="text" id="ai-base-url" value="https://api.openai.com/v1">
             </div>
             <div class="form-group">
-              <label>Model Name:</label>
+              <label for="ai-model">Model Name:</label>
               <input type="text" id="ai-model" value="gpt-4o-mini">
             </div>
             <div class="form-group">
-              <label>API Key (Leave empty to keep existing):</label>
-              <input type="password" id="ai-api-key-input" placeholder="sk-...">
-              <small style="color:var(--text-secondary);">Currently Configured: <span id="ai-api-key-display">None</span></small>
+              <label for="ai-api-key-input">API Key (leave empty to keep existing):</label>
+              <input type="password" id="ai-api-key-input" placeholder="sk-…" autocomplete="off">
+              <div class="field-hint">Currently configured: <span id="ai-api-key-display">None</span></div>
             </div>
-            <div style="display:flex; gap:10px; margin-top:20px;">
-              <button type="submit" class="btn btn-primary">Save Settings</button>
-              <button type="button" class="btn btn-secondary" onclick="testAI()">Test AI Connection</button>
+            <div class="flex gap-2 mt-4">
+              <button type="submit" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Save Settings
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="testAI()">Test Connection</button>
             </div>
           </form>
         </div>
       </section>
 
-      <!-- 10. SETTINGS -->
-      <section id="sec-settings" class="section">
-        <div class="card" style="max-width:650px;">
-          <h3 style="margin-bottom:20px;">Global Application Settings</h3>
+      <!-- ================================================
+           11. SETTINGS
+           ================================================ -->
+      <section id="sec-settings" class="section" aria-label="Global settings">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Global Application Settings</div>
+            <div class="section-sub">Queue limits, duration controls and storage quotas</div>
+          </div>
+        </div>
+
+        <div class="card max-w-md">
           <form onsubmit="saveGlobalSettings(event)">
             <div class="form-group">
-              <label>Maximum Video Duration (seconds):</label>
+              <label for="set-max-dur">Maximum Video Duration (seconds):</label>
               <input type="number" id="set-max-dur" value="7200">
-              <small style="color:var(--text-secondary);">7200 seconds = 02:00:00 (2 hours)</small>
+              <div class="field-hint">7200 seconds = 02:00:00 (2 hours)</div>
             </div>
             <div class="form-group">
-              <label><input type="checkbox" id="set-allow-unknown"> Allow Unknown Duration</label>
+              <label class="inline">
+                <input type="checkbox" id="set-allow-unknown">
+                Allow Unknown Duration
+              </label>
             </div>
             <div class="form-group">
-              <label><input type="checkbox" id="set-cache-bypass" checked> Cache Hit Bypasses Duration Limit</label>
+              <label class="inline">
+                <input type="checkbox" id="set-cache-bypass" checked>
+                Cache Hit Bypasses Duration Limit
+              </label>
             </div>
             <div class="form-group">
-              <label>Max Concurrent Processing Jobs Per User:</label>
+              <label for="set-max-per-user">Max Concurrent Jobs Per User:</label>
               <input type="number" id="set-max-per-user" value="1" min="1" max="5">
             </div>
             <div class="form-group">
-              <label>Max Queued Jobs Per User:</label>
+              <label for="set-max-queued">Max Queued Jobs Per User:</label>
               <input type="number" id="set-max-queued" value="5" min="1" max="20">
             </div>
             <div class="form-group">
-              <label>Max Temporary Storage Limit (GB):</label>
+              <label for="set-max-temp">Max Temporary Storage Limit (GB):</label>
               <input type="number" id="set-max-temp" value="30" min="5" max="70">
             </div>
-            <button type="submit" class="btn btn-primary" style="margin-top:10px;">Save Global Settings</button>
+            <button type="submit" class="btn btn-primary mt-2">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Global Settings
+            </button>
           </form>
         </div>
       </section>
 
-      <!-- 11. SYSTEM -->
-      <section id="sec-system" class="section">
+      <!-- ================================================
+           12. SYSTEM
+           ================================================ -->
+      <section id="sec-system" class="section" aria-label="System status">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">System Health</div>
+            <div class="section-sub">Service readiness and infrastructure telemetry</div>
+          </div>
+        </div>
+
         <div class="grid-2">
           <div class="card">
-            <h3 style="margin-bottom:15px;">Service Readiness & Health</h3>
-            <p style="margin-bottom:10px;">Application Health: <b style="color:var(--success);">HEALTHY 🟢</b></p>
-            <p style="margin-bottom:10px;">PostgreSQL Database: <b id="sys-ready-db">-</b></p>
-            <p style="margin-bottom:10px;">Redis Queue & Locks: <b id="sys-ready-redis">-</b></p>
+            <div class="card__header">
+              <div class="card__title">Service Readiness</div>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Application</span>
+              <span class="info-row__val text-success bold">HEALTHY</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">PostgreSQL Database</span>
+              <span class="info-row__val" id="sys-ready-db">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-row__key">Redis Queue &amp; Locks</span>
+              <span class="info-row__val" id="sys-ready-redis">—</span>
+            </div>
           </div>
+
           <div class="card">
-            <h3 style="margin-bottom:15px;">Raw Metrics</h3>
-            <p style="color:var(--text-secondary); margin-bottom:15px;">Prometheus endpoint available at <code>/metrics</code></p>
-            <a href="/metrics" target="_blank" class="btn btn-secondary">View /metrics</a>
+            <div class="card__header">
+              <div class="card__title">Raw Metrics</div>
+            </div>
+            <p class="font-sm text-secondary mb-4">Prometheus endpoint available at <code>/metrics</code></p>
+            <a href="/metrics" target="_blank" rel="noopener" class="btn btn-secondary">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              View /metrics
+            </a>
           </div>
         </div>
       </section>
 
-      <!-- 12. LOGS -->
-      <section id="sec-logs" class="section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-          <h3>Structured System Logs</h3>
-          <button class="btn btn-secondary" onclick="loadLogs()">Refresh</button>
+      <!-- ================================================
+           13. LOGS
+           ================================================ -->
+      <section id="sec-logs" class="section" aria-label="System logs">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Structured System Logs</div>
+            <div class="section-sub">Latest 100 structured log entries from all services</div>
+          </div>
+          <div class="section-actions">
+            <button class="btn btn-secondary" onclick="loadLogs()">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.44"/></svg>
+              Refresh
+            </button>
+          </div>
         </div>
-        <div class="card" style="background:#000; padding:15px; border-radius:var(--radius); font-family:monospace; font-size:0.85rem; max-height:500px; overflow-y:auto; white-space:pre-wrap;" id="log-display">
-          Loading logs...
-        </div>
+        <div class="log-box" id="log-display" role="log" aria-live="polite">Loading logs…</div>
       </section>
 
-      <!-- 13. AUDIT LOG -->
-      <section id="sec-audit" class="section">
-        <h3 style="margin-bottom:15px;">Security & Administrative Audit Trail</h3>
+      <!-- ================================================
+           14. AUDIT LOG
+           ================================================ -->
+      <section id="sec-audit" class="section" aria-label="Audit log">
+        <div class="section-header">
+          <div class="section-header__left">
+            <div class="section-title">Security Audit Trail</div>
+            <div class="section-sub">Administrative actions and authentication events</div>
+          </div>
+        </div>
+
         <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Action</th>
-                <th>Admin</th>
-                <th>Details</th>
-                <th>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-audit"></tbody>
-          </table>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Action</th>
+                  <th>Admin</th>
+                  <th>Details</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-audit"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
     </main>
-  </div>
+  </div><!-- .main-area -->
+</div><!-- .shell -->
 
-  <!-- Login Modal -->
-  <div id="login-modal" class="modal">
-    <div class="modal-content">
-      <h3 style="margin-bottom:15px; color:var(--accent);">Admin Authentication Required</h3>
-      <div id="login-error" style="color:var(--danger); display:none; margin-bottom:10px; font-size:0.85rem;"></div>
-      <form id="login-form">
-        <div class="form-group">
-          <label>Username:</label>
-          <input type="text" id="login-username" value="admin" required>
-        </div>
-        <div class="form-group">
-          <label>Password:</label>
-          <input type="password" id="login-password" placeholder="Enter admin password" required>
-        </div>
-        <button type="submit" class="btn btn-primary" style="width:100%; margin-top:10px;">Sign In</button>
-      </form>
+<!-- ============================================================
+     LOGIN MODAL
+     ============================================================ -->
+<div id="login-modal" class="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-heading">
+  <div class="login-card">
+    <div class="login-card__logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.95-1.96C18.88 4 12 4 12 4s-6.88 0-8.59.46A2.78 2.78 0 0 0 1.46 6.42C1 8.14 1 11.71 1 11.71s0 3.57.46 5.29a2.78 2.78 0 0 0 1.95 1.96C5.12 19.42 12 19.42 12 19.42s6.88 0 8.59-.46a2.78 2.78 0 0 0 1.96-1.96C23 15.28 23 11.71 23 11.71s0-3.57-.46-5.29z"/><polygon points="9.75 15.02 15.5 11.71 9.75 8.4 9.75 15.02"/></svg>
+      <div>
+        <div class="login-card__brand">YTDL Admin</div>
+        <div class="login-card__sub">Telegram Downloader</div>
+      </div>
     </div>
-  </div>
 
-  <!-- Add Required Channel Modal -->
-  <div id="modal-add-channel" class="modal">
-    <div class="modal-content">
-      <h3 style="margin-bottom:15px;">Add Required Channel</h3>
-      <form onsubmit="addChannelModalSubmit(event)">
+    <h2 id="login-heading">Sign In</h2>
+
+    <div id="login-error" class="alert-strip alert-strip--danger hidden" role="alert"></div>
+
+    <form id="login-form">
+      <div class="form-group">
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" value="admin" autocomplete="username" required>
+      </div>
+      <div class="form-group">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" placeholder="Enter admin password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full btn-lg mt-4">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        Sign In
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ============================================================
+     ADD CHANNEL MODAL
+     ============================================================ -->
+<div id="modal-add-channel" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-add-channel-title">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-add-channel-title">Add Required Channel</div>
+      <button class="modal-close" onclick="document.getElementById('modal-add-channel').classList.remove('active')" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form onsubmit="addChannelModalSubmit(event)" id="form-add-channel">
         <div class="form-group">
-          <label>Channel Title:</label>
+          <label for="mj-title">Channel Title:</label>
           <input type="text" id="mj-title" placeholder="My Channel" required>
         </div>
         <div class="form-group">
-          <label>Channel Numeric Chat ID (e.g. -1001234567890):</label>
+          <label for="mj-chat-id">Channel Numeric Chat ID:</label>
           <input type="number" id="mj-chat-id" placeholder="-1001234567890" required>
         </div>
         <div class="form-group">
-          <label>Public Username (without @, optional):</label>
+          <label for="mj-username">Public Username (without @, optional):</label>
           <input type="text" id="mj-username" placeholder="mychannel">
         </div>
         <div class="form-group">
-          <label>Invite Link (required for private channels):</label>
+          <label for="mj-invite">Invite Link (required for private channels):</label>
           <input type="text" id="mj-invite" placeholder="https://t.me/+AbCdEfGhIj">
-        </div>
-        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
-          <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-add-channel').classList.remove('active')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Add Channel</button>
         </div>
       </form>
     </div>
-  </div>
-
-  <!-- Mode Migration Modal -->
-  <div id="modal-migration" class="modal">
-    <div class="modal-content">
-      <h3 style="margin-bottom:15px;">Telegram Mode Migration</h3>
-      <div id="migration-warning" style="padding:10px; background:rgba(255,193,7,0.15); border:1px solid #ffc107; border-radius:var(--radius); margin-bottom:15px; font-size:0.85rem; color:#ffc107;"></div>
-      <p id="migration-desc" style="margin-bottom:15px; font-size:0.9rem; line-height:1.5;"></p>
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
-        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-migration').classList.remove('active')">Cancel</button>
-        <button type="button" class="btn btn-warning" id="btn-confirm-migration" onclick="executeMigration()">Confirm & Migrate</button>
-      </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-add-channel').classList.remove('active')">Cancel</button>
+      <button type="submit" form="form-add-channel" class="btn btn-primary">Add Channel</button>
     </div>
   </div>
+</div>
 
-  <script src="/static/js/api.js"></script>
-  <script src="/static/js/app.js"></script>
+<!-- ============================================================
+     MIGRATION MODAL
+     ============================================================ -->
+<div id="modal-migration" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-migration-title">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-migration-title">Telegram Mode Migration</div>
+      <button class="modal-close" onclick="document.getElementById('modal-migration').classList.remove('active')" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="alert-strip alert-strip--warning mb-4" id="migration-warning" role="alert">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span id="migration-warning-text"></span>
+      </div>
+      <p id="migration-desc" class="font-sm text-secondary"></p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-migration').classList.remove('active')">Cancel</button>
+      <button type="button" class="btn btn-warning" id="btn-confirm-migration" onclick="executeMigration()">Confirm &amp; Migrate</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/components.js"></script>
+<script src="/static/js/app.js"></script>
 </body>
 </html>
