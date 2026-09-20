@@ -126,3 +126,15 @@ class MockRedis:
                 return job_id
 
             return None
+
+    async def publish(self, channel: str, message: str) -> int:
+        return 1
+
+    def pubsub(self):
+        class MockPubSub:
+            async def subscribe(self, *channels):
+                pass
+            async def listen(self):
+                if False:
+                    yield {}
+        return MockPubSub()

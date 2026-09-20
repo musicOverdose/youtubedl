@@ -33,9 +33,11 @@ async def handle_youtube_url(message: Message, bot: Bot):
         if not is_auth:
             logger.info(f"User {user_id} blocked by Must-Join requirement")
             kb = build_must_join_keyboard(missing_channels, resume_action=canonical_url)
+            prompt_text = await MustJoinService.get_rendered_must_join_message(
+                session, message.from_user.first_name, missing_channels
+            )
             await message.answer(
-                "🔒 <b>You must join these channel(s) to use the bot:</b>\n"
-                "Please join all required channels below, then press <b>Check Again</b>.",
+                prompt_text,
                 reply_markup=kb,
             )
             return

@@ -184,3 +184,52 @@ async def test_channel_bot_status(
         "detail": status_detail,
         "bot_status": ch.bot_status,
     }
+
+
+class MustJoinMessageRequest(BaseModel):
+    message: str
+
+
+@router.get("/message")
+async def get_must_join_message(
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    from src.services.setting_service import DEFAULT_MUST_JOIN_MESSAGE, SettingService
+    msg = await SettingService.get_must_join_message(session)
+    return {
+        "message": msg,
+        "is_default": (msg == DEFAULT_MUST_JOIN_MESSAGE),
+        "default_message": DEFAULT_MUST_JOIN_MESSAGE,
+    }
+
+
+@router.post("/message")
+async def update_must_join_message(
+    req: MustJoinMessageRequest,
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    from src.services.setting_service import SettingService
+    saved_msg = await SettingService.save_must_join_message(
+        req.message, session=session, admin_username=admin.get("sub", "admin")
+    )
+    await AuditService.log_action(
+        session, "SETTING_UPDATE", admin["sub"], "Updated custom Must-Join message template"
+    )
+    return {"status": "saved", "message": saved_msg}
+
+
+@router.post("/message/reset")
+async def reset_must_join_message(
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    from src.services.setting_service import SettingService
+    reset_msg = await SettingService.reset_must_join_message(
+        session=session, admin_username=admin.get("sub", "admin")
+    )
+    await AuditService.log_action(
+        session, "SETTING_UPDATE", admin["sub"], "Reset Must-Join message template to default"
+    )
+    return {"status": "reset", "message": reset_msg}

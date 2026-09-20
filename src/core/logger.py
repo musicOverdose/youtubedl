@@ -31,8 +31,12 @@ class SensitiveDataFilter(logging.Filter):
 
     @staticmethod
     def redact(text: str) -> str:
+        # Redact bot tokens in URLs: e.g. /bot123456:ABC-DEF/getMe -> /bot<REDACTED>/getMe
+        text = re.sub(r"/bot[^/]+/", "/bot<REDACTED>/", text)
         # Redact bot tokens
         text = re.sub(r"(bot)?\d+:[\w-]{20,}", "[REDACTED_TOKEN]", text, flags=re.IGNORECASE)
+        # Redact API hashes (32 hex characters in key-value context)
+        text = re.sub(r"((?:api_hash|hash)\s*[:=]\s*)['\"]?[a-f0-9]{32}['\"]?", r"\1[REDACTED]", text, flags=re.IGNORECASE)
         # Redact password fields
         text = re.sub(r"(password\s*[:=]\s*)['\"][^'\"]+['\"]", r"\1'[REDACTED]'", text, flags=re.IGNORECASE)
         text = re.sub(r"(password\s*[:=]\s*)[^\s]+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
@@ -58,3 +62,12 @@ def setup_logger(service_name: str, log_level: str = "INFO") -> logging.Logger:
         logger.propagate = False
 
     return logger
+
+
+def get_logger(service_name: str = "app") -> logging.Logger:
+    try:
+        from src.core.config import settings
+        log_level = settings.LOG_LEVEL
+    except Exception:
+        log_level = "INFO"
+    return setup_logger(service_name, log_level)

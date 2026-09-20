@@ -19,6 +19,7 @@
       <li class="nav-item" data-section="jobs">📁 Jobs</li>
       <li class="nav-item" data-section="cache">⚡ Cache</li>
       <li class="nav-item" data-section="users">👥 Users</li>
+      <li class="nav-item" data-section="telegram">🤖 Telegram</li>
       <li class="nav-item" data-section="must-join">🔒 Must Join</li>
       <li class="nav-item" data-section="youtube">📺 YouTube</li>
       <li class="nav-item" data-section="cookies">🍪 Cookies</li>
@@ -268,6 +269,136 @@
             <tbody id="tbody-must-join"></tbody>
           </table>
         </div>
+
+        <!-- Customizable Must-Join Message Card -->
+        <div class="card" style="margin-top:25px;">
+          <h3 style="margin-bottom:12px;">Customizable Must-Join Template</h3>
+          <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">
+            Dynamic placeholders: <code>{first_name}</code> for subscriber's name, <code>{channel_list}</code> for list of missing channels.
+          </p>
+          <div class="form-group">
+            <textarea id="mj-custom-msg-area" style="min-height:100px; font-family:inherit;"></textarea>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-primary" onclick="saveMustJoinMessage()">Save Custom Message</button>
+            <button class="btn btn-secondary" onclick="resetMustJoinMessage()">Reset to Default</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TELEGRAM CONFIGURATION -->
+      <section id="sec-telegram" class="section">
+        <div class="grid-2">
+          <!-- Main Form Card -->
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Telegram Architecture & API Settings</h3>
+            <div id="telegram-alert" style="display:none; padding:10px 14px; border-radius:var(--radius); margin-bottom:15px; font-size:0.9rem;"></div>
+
+            <!-- Mode Selector -->
+            <div class="form-group" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:var(--radius);">
+              <label style="font-weight:600; margin-bottom:8px;">Telegram API Operating Mode:</label>
+              <div style="display:flex; flex-direction:column; gap:8px;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+                  <input type="radio" name="tg-mode-radio" value="local" checked onchange="onTelegramModeChange()">
+                  <span><b>Local Bot API Server</b> (Standard Production - Up to 2000 MB Uploads)</span>
+                </label>
+                <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+                  <input type="radio" name="tg-mode-radio" value="cloud" onchange="onTelegramModeChange()">
+                  <span><b>Cloud Bot API</b> (Diagnostic / Fallback - 50 MB Upload Limit)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Derived Endpoint -->
+            <div class="form-group">
+              <label>Derived Bot API Endpoint:</label>
+              <input type="text" id="tg-derived-endpoint" value="http://telegram-bot-api:8081" readonly style="background:rgba(0,0,0,0.3); color:var(--text-secondary);">
+            </div>
+
+            <!-- Bot Token Input with Show/Hide -->
+            <div class="form-group">
+              <label>Bot API Token (from @BotFather):</label>
+              <div style="display:flex; gap:8px;">
+                <input type="password" id="tg-bot-token" placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ" style="flex:1;">
+                <button type="button" class="btn btn-secondary" onclick="toggleInputMask('tg-bot-token')">👁️</button>
+              </div>
+              <small style="color:var(--text-secondary);">Current Active Token: <span id="tg-token-masked-display">Not Set</span></small>
+            </div>
+
+            <!-- Local Mode Credentials Section -->
+            <div id="tg-local-credentials-group">
+              <div class="form-group">
+                <label>Telegram API ID (numeric, from my.telegram.org):</label>
+                <input type="number" id="tg-api-id" placeholder="12345678">
+              </div>
+
+              <div class="form-group">
+                <label>Telegram API Hash (32 hex characters, from my.telegram.org):</label>
+                <div style="display:flex; gap:8px;">
+                  <input type="password" id="tg-api-hash" placeholder="0123456789abcdef0123456789abcdef" style="flex:1;">
+                  <button type="button" class="btn btn-secondary" onclick="toggleInputMask('tg-api-hash')">👁️</button>
+                </div>
+                <small style="color:var(--text-secondary);">Current Active Hash: <span id="tg-hash-masked-display">Not Set</span></small>
+              </div>
+            </div>
+
+            <!-- Cache Channel ID -->
+            <div class="form-group">
+              <label>Private Cache Channel ID (e.g. -1001234567890):</label>
+              <input type="text" id="tg-cache-channel" placeholder="-1001234567890">
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:20px;">
+              <button class="btn btn-primary" id="btn-save-telegram" onclick="saveTelegramConfig()">Save Telegram Configuration</button>
+              <button class="btn btn-secondary" onclick="testBotToken()">Test Token</button>
+              <button class="btn btn-secondary" id="btn-test-local-api" onclick="testLocalBotAPI()">Test Local Bot API</button>
+              <button class="btn btn-secondary" onclick="testCacheChannel()">Test Cache Channel</button>
+            </div>
+          </div>
+
+          <!-- Status & Telemetry Card -->
+          <div class="card">
+            <h3 style="margin-bottom:15px;">Telegram Live Status & Telemetry</h3>
+            
+            <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
+                <span>Bot Identity & Health:</span>
+                <span id="badge-tg-bot" class="badge badge-danger">🔴 Disconnected</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
+                <span>Active API Mode:</span>
+                <span id="badge-tg-mode" class="badge badge-info">Local</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
+                <span>Local Bot API Gateway:</span>
+                <span id="badge-tg-local" class="badge badge-warning">Probing...</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.03); border-radius:var(--radius);">
+                <span>Configuration Version:</span>
+                <span id="stat-tg-version" style="font-weight:bold;">v1</span>
+              </div>
+            </div>
+
+            <h4 style="margin-bottom:10px; color:var(--text-secondary);">Isolated Storage Telemetry (Service-Reported)</h4>
+            <div style="display:flex; flex-direction:column; gap:8px; font-size:0.9rem; margin-bottom:20px;">
+              <div>Worker Staging (<code>/transfer</code>): <b id="stat-transfer-usage">0 MB</b></div>
+              <div>Worker Scratch (<code>/tmp/ytdl</code>): <b id="stat-worker-temp">0 MB</b></div>
+              <div>Local Bot API Data (<code>/var/lib/telegram-bot-api</code>): <b id="stat-botapi-data">0 MB</b></div>
+              <div>Host Filesystem Free Space: <b id="stat-host-free">0 GB</b></div>
+            </div>
+
+            <div style="border-top:1px solid var(--border-color); padding-top:15px; margin-top:10px;">
+              <h4 style="margin-bottom:10px;">Explicit Mode Migration</h4>
+              <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">
+                Safely migrate the active bot session between Local and Cloud Bot API servers with graceful logout handling.
+              </p>
+              <div style="display:flex; gap:10px;">
+                <button class="btn btn-warning" onclick="openMigrationModal('local')">Migrate to Local Bot API</button>
+                <button class="btn btn-secondary" onclick="openMigrationModal('cloud')">Migrate to Cloud Bot API</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- 7. YOUTUBE SETTINGS -->
@@ -492,6 +623,19 @@
           <button type="submit" class="btn btn-primary">Add Channel</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Mode Migration Modal -->
+  <div id="modal-migration" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom:15px;">Telegram Mode Migration</h3>
+      <div id="migration-warning" style="padding:10px; background:rgba(255,193,7,0.15); border:1px solid #ffc107; border-radius:var(--radius); margin-bottom:15px; font-size:0.85rem; color:#ffc107;"></div>
+      <p id="migration-desc" style="margin-bottom:15px; font-size:0.9rem; line-height:1.5;"></p>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-migration').classList.remove('active')">Cancel</button>
+        <button type="button" class="btn btn-warning" id="btn-confirm-migration" onclick="executeMigration()">Confirm & Migrate</button>
+      </div>
     </div>
   </div>
 

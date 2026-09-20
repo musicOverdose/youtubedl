@@ -29,6 +29,10 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
 
 ## ✨ Features
 
+- 🚀 **Production Local Bot API (2000 MB Uploads)**:
+  - Runs self-hosted **Telegram Local Bot API Server 10.3** by default, lifting Telegram's 50 MB cloud limit to **2000 MB (2 GB)** single-file uploads.
+  - **Zero-Multipart Local Handoff**: Completed media in `/transfer/<job-id>/` is handed directly to the Local Bot API server via `file:///transfer/...` URI, avoiding HTTP multipart stream overhead and RAM spikes.
+  - **Cloud Fallback Mode**: Gracefully supports standard Cloud Bot API (`https://api.telegram.org`) with strict 50 MB preflight guard.
 - 🎯 **Quality-First Telegram UX**:
   - Dynamically detects actual available resolutions directly from YouTube streams (`2160p`, `1440p`, `1080p`, `720p`, `480p`, `360p`).
   - Previews send the video thumbnail with only the **Video Title** as caption.
@@ -44,7 +48,7 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
 - 🧹 **Zero Permanent Disk Waste**:
   - Temporary files are automatically purged after verified cache upload, failure, or cancellation.
 - 🛡️ **Authoritative Must-Join Channel Guard**:
-  - Optionally require users to join specific Telegram channels before granting access. Re-verified authoritatively on every interaction.
+  - Optionally require users to join specific Telegram channels before granting access. Customizable template message with `{first_name}` and `{channel_list}` placeholders.
 - 🚦 **Persistent Queue & Concurrency Control**:
   - Redis-backed FIFO queue surviving container restarts.
   - Race-safe concurrency slot allocation via Redis Lua scripts.
@@ -56,8 +60,14 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
   - Persian AI subtitle translation using any OpenAI-compatible API endpoint with strict timestamp preservation.
 - 🍪 **YouTube Cookies Manager**:
   - Upload or paste `cookies.txt` with Netscape format validation, atomic write, and hot-reload.
+- 🔐 **Least-Privilege Security Architecture**:
+  - **Worker isolation**: Worker has no access to `master.key` or PostgreSQL decryption; reads `bot-token` strictly from a restricted Unix group runtime volume (`0640`, group `ytdl-runtime`).
+  - **Non-blocking session advisory lock**: `pg_try_advisory_lock(73541629)` prevents concurrent admin configuration collisions with HTTP 409 Conflict.
+  - **Service-reported telemetry**: Worker and Local Bot API report disk metrics into Redis; no cross-service storage volume mounts into Web Admin.
+  - **Startup readiness gating**: Bot Service halts polling until Web Admin verifies configuration and creates `/config/state/READY`.
 - 🖥️ **Full Web Administration Panel**:
   - Modern, responsive dashboard on port `8085` protected by Argon2id authentication.
+  - Interactive Telegram Configuration panel with live API testing, derived endpoints, and zero-downtime hot reloading.
 
 ---
 
@@ -118,35 +128,46 @@ flowchart TD
     User(["Telegram User"]) <-->|"Commands & Callbacks"| Bot["Bot Service (aiogram 3)"]
     Admin(["Administrator"]) <-->|"Web UI :8085"| Web["Web Admin (FastAPI + SPA)"]
 
-    subgraph Storage ["Storage & State"]
-        PG[("PostgreSQL 16")]
-        Redis[("Redis 7 (AOF Queue)")]
-        SecretsVol["Secrets Volume (/config/secrets)"]
+    subgraph Storage ["Segregated Storage & State"]
+        PG[("PostgreSQL 16 (ACTIVE/PENDING Config)")]
+        Redis[("Redis 7 (Queue, Cache, PubSub & Telemetry)")]
+        MasterKeyVol["Master Key Storage (/config/master) - 0700 Root"]
+        RuntimeTokenVol["Runtime Secret (/config/runtime) - 0640 ytdl-runtime"]
+        StateVol["State Storage (/config/state) - READY Flag"]
+        LocalApiConfig["Bot API Config (/config/bot-api) - 0640 UID 101"]
+        TransferVol["Transfer Staging (/transfer) - Zero Multipart"]
         TempVol["Temp Storage (/tmp/ytdl)"]
+        LocalBotApiData["Bot API Data (/var/lib/telegram-bot-api)"]
+    end
+
+    subgraph TelegramServices ["Telegram Infrastructure"]
+        LocalBotAPI["Local Bot API Server (10.3 / UID 101)"]
+        CacheChannel["Private Telegram Cache Channel"]
     end
 
     subgraph Processing ["Processing Engine"]
         Worker["Worker (yt-dlp + Deno + FFmpeg)"]
     end
 
-    subgraph Telegram ["Telegram Infrastructure"]
-        CacheChannel["Private Telegram Cache Channel"]
-        TelegramAPI["Telegram Bot API / Local API"]
-    end
-
-    Bot <--> Redis
-    Bot <--> PG
-    Bot <--> TelegramAPI
-
+    Web -->|"Decrypts & writes"| MasterKeyVol
+    Web -->|"Writes bot-token"| RuntimeTokenVol
+    Web -->|"Writes READY"| StateVol
+    Web -->|"Writes env & trigger"| LocalApiConfig
     Web <--> PG
     Web <--> Redis
-    Web --> SecretsVol
 
+    Bot -->|"Waits for READY"| StateVol
+    Bot -->|"Reads bot-token"| RuntimeTokenVol
+    Bot <--> Redis
+    Bot <--> LocalBotAPI
+
+    Worker -->|"Reads bot-token"| RuntimeTokenVol
     Worker <--> Redis
-    Worker <--> PG
     Worker <--> TempVol
-    Worker --> CacheChannel
-    Worker <--> TelegramAPI
+    Worker -->|"Stages zero-multipart"| TransferVol
+    TransferVol -->|"file:///transfer/... direct handoff"| LocalBotAPI
+    LocalBotAPI --> LocalBotApiData
+    LocalBotAPI --> CacheChannel
 ```
 
 ---
@@ -289,25 +310,42 @@ Access the dashboard at `http://<your-server-ip>:8085`.
 
 ## 🧪 Testing
 
-The repository contains a 27-test automated test suite:
+The repository contains a comprehensive 46-test automated test suite:
 
 ```bash
-# Run test suite:
+# Run complete test suite:
 pytest -v
 ```
 
 Tests cover:
-- URL parsing & normalization
-- Dynamic quality extraction & descending order
-- Exact quality match enforcement (no downgrading)
-- Stream copy vs. transcoding decision logic
-- Subtitle normalization & strict SRT validation
-- Deterministic cache key generation & cache invalidation
-- Redis FIFO queue ordering & derived position calculation
-- Concurrency race-safety with atomic Lua scripts
-- Authoritative Must-Join channel checks & membership transitions
-- Cookie Netscape format validation & atomic file writes
-- Security: secret redaction, Argon2id hashing, and session authentication.
+- **Telegram Dual-Mode & Zero-Multipart Transfer**:
+  - Direct local handoff via `file:///transfer/...` URI in Local mode
+  - Strict 50 MB preflight rejection and `FSInputFile` usage in Cloud mode
+  - Dynamic endpoint derivation (`http://telegram-bot-api:8081` vs `https://api.telegram.org`)
+  - Staged directory cleanup on startup and post-upload
+- **Non-Blocking Advisory Locking & Transaction State Machine**:
+  - `pg_try_advisory_lock(73541629)` immediate HTTP 409 Conflict under concurrency
+  - Short Transaction 1 (create `PENDING`), external validation probes, Short Transaction 2 (promote to `ACTIVE`)
+  - Automatic rollback on TCP/probe failure, restoring candidate env files and deleting `PENDING`
+  - Startup reconciliation and readiness gating (`/config/state/READY`)
+- **Service-Reported Telemetry**:
+  - Worker disk telemetry reporting (`/tmp/ytdl` and `/transfer` usage to Redis)
+  - Telegram Local Bot API telemetry reporting (`/var/lib/telegram-bot-api` usage to Redis)
+  - System service aggregation and least-privilege storage boundary validation
+- **Security & Secret Management**:
+  - Fernet master key generation fail-safe against pre-existing encrypted PostgreSQL rows
+  - Secret masking and log redaction for `/bot<token>/` and 32-hex API hashes
+  - Strict Unix file permission enforcement (`0640` group `ytdl-runtime`, `0640` GID 101, `0644` state)
+  - Argon2id password hashing and session token verification
+- **Media Processing & Business Logic**:
+  - Dynamic quality extraction & descending order
+  - Stream copy vs. transcoding decision logic (zero unnecessary transcode)
+  - Subtitle normalization & strict SRT validation
+  - Deterministic cache key generation & cache invalidation
+  - Redis FIFO queue ordering & derived position calculation
+  - Concurrency race-safety with atomic Lua scripts
+  - Authoritative Must-Join channel checks & customizable template rendering
+  - Cookie Netscape format validation & atomic file writes
 
 ---
 

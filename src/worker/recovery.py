@@ -67,4 +67,16 @@ class WorkerRecovery:
             except Exception as e:
                 logger.error(f"Error during temp directory cleanup: {e}")
 
+        # 4. Clean transfer staging directory /transfer/
+        transfer_dir = settings.TRANSFER_DIR
+        if os.path.exists(transfer_dir):
+            try:
+                for item in os.listdir(transfer_dir):
+                    item_path = os.path.join(transfer_dir, item)
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path, ignore_errors=True)
+                        logger.info(f"Cleaned stale transfer folder: {item_path}")
+            except Exception as e:
+                logger.error(f"Error during transfer directory cleanup: {e}")
+
         logger.info("Startup recovery complete.")

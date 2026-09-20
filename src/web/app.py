@@ -20,6 +20,7 @@ from src.web.routes.must_join_routes import router as must_join_router
 from src.web.routes.queue_routes import router as queue_router
 from src.web.routes.settings_routes import router as settings_router
 from src.web.routes.system_routes import router as system_router
+from src.web.routes.telegram_routes import router as telegram_router
 from src.web.routes.user_routes import router as user_router
 
 logger = setup_logger("web_app")
@@ -35,6 +36,13 @@ async def lifespan(app: FastAPI):
     if settings.ADMIN_PASSWORD and not settings.ADMIN_PASSWORD_HASH:
         settings.ADMIN_PASSWORD_HASH = hash_password(settings.ADMIN_PASSWORD)
         logger.info(f"Initialized admin credentials for '{settings.ADMIN_USERNAME}'")
+
+    # Startup state reconciliation (authoritative ACTIVE DB -> runtime files & READY gating)
+    from src.services.setting_service import SettingService
+    try:
+        await SettingService.reconcile_startup_state()
+    except Exception as e:
+        logger.error("Failed startup state reconciliation: %s", e)
 
     yield
     logger.info("Shutting down web application...")
@@ -56,6 +64,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(system_router)
+app.include_router(telegram_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(queue_router)

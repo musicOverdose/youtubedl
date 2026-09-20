@@ -22,7 +22,7 @@ async def get_dashboard_stats(
     session: AsyncSession = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    system_stats = SystemService.get_system_stats()
+    system_stats = await SystemService.get_system_stats()
     tool_versions = await SystemService.get_tool_versions()
 
     # Database stats

@@ -2,8 +2,9 @@ import asyncio
 from datetime import datetime, timezone
 import glob
 import os
+from pathlib import Path
 import shutil
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from aiogram import Bot
 from aiogram.types import FSInputFile
 from sqlalchemy import select, update
@@ -14,6 +15,7 @@ from src.core.config import settings
 from src.core.constants import DeliveryStatus, JobStatus, OperationType
 from src.core.database import AsyncSessionLocal
 from src.core.logger import setup_logger
+from src.core.redis import get_redis_client
 from src.models.job import Job
 from src.models.job_request import JobRequest
 from src.services.ai_service import AIService
@@ -24,13 +26,148 @@ from src.services.queue_service import QueueService
 from src.services.system_service import SystemService
 from src.services.ytdlp_service import YtDlpService
 from src.worker.notifier import StatusNotifier
+from src.worker.telegram_factory import TelegramClientFactory
 
 logger = setup_logger("worker_processor")
 
 
 class JobProcessor:
-    def __init__(self, bot: Bot):
+    def __init__(self, bot: Optional[Bot] = None):
         self.bot = bot
+
+    async def report_telemetry(self) -> None:
+        """Periodically publishes Worker disk usage telemetry to Redis."""
+        try:
+            r = get_redis_client()
+            temp_bytes = 0
+            if os.path.exists(settings.TEMP_DIR):
+                for root, _, files in os.walk(settings.TEMP_DIR):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        if os.path.exists(fp) and not os.path.islink(fp):
+                            temp_bytes += os.path.getsize(fp)
+
+            transfer_bytes = 0
+            if os.path.exists(settings.TRANSFER_DIR):
+                for root, _, files in os.walk(settings.TRANSFER_DIR):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        if os.path.exists(fp) and not os.path.islink(fp):
+                            transfer_bytes += os.path.getsize(fp)
+
+            disk_usage = shutil.disk_usage(settings.TEMP_DIR)
+
+            await r.set("telemetry:worker:temp_ytdl_bytes", str(temp_bytes))
+            await r.set("telemetry:worker:transfer_bytes", str(transfer_bytes))
+            await r.set("telemetry:host:filesystem_free_bytes", str(disk_usage.free))
+            await r.set("telemetry:host:filesystem_total_bytes", str(disk_usage.total))
+            await r.set("telemetry:host:filesystem_used_bytes", str(disk_usage.used))
+        except Exception as e:
+            logger.debug("Failed to report telemetry to Redis: %s", e)
+
+    async def _send_media_to_cache(
+        self,
+        bot: Bot,
+        api_mode: str,
+        channel_id: int,
+        local_file_path: str,
+        operation: str,
+        job_id: str,
+        job_title: str,
+        caption: str = "",
+        extra_kwargs: Optional[dict] = None,
+    ) -> Tuple[int, int]:
+        """
+        Mode-branched media upload handler:
+        - Local Mode: Stages file to /transfer/<job-id>/<filename> with 0755/0644 permissions,
+          passes string URI (file:///transfer/...) to Local Bot API (zero-multipart local handoff),
+          and cleans up immediately post-upload.
+        - Cloud Mode: Preflights 50 MB limit, streams multipart via FSInputFile.
+        """
+        extra_kwargs = extra_kwargs or {}
+        file_size = os.path.getsize(local_file_path)
+        transfer_job_dir = Path(settings.TRANSFER_DIR) / job_id
+
+        if api_mode == "cloud":
+            # 50 MB preflight check
+            if file_size > 50 * 1024 * 1024:
+                size_mb = round(file_size / (1024 * 1024), 1)
+                raise ValueError(
+                    f"File size ({size_mb} MB) exceeds Cloud Bot API limit of 50 MB. "
+                    "Switch to Local Bot API in Web Admin for up to 2000 MB uploads."
+                )
+
+            # Upload via FSInputFile (multipart)
+            if operation == OperationType.VIDEO.value or operation == "VIDEO":
+                tg_file = FSInputFile(local_file_path, filename=f"{job_title[:60]}.mp4")
+                msg = await bot.send_video(
+                    chat_id=channel_id,
+                    video=tg_file,
+                    caption=caption,
+                    **extra_kwargs,
+                )
+            elif operation == OperationType.AUDIO.value or operation == "AUDIO":
+                tg_file = FSInputFile(local_file_path, filename=f"{job_title[:60]}.mp3")
+                msg = await bot.send_audio(
+                    chat_id=channel_id,
+                    audio=tg_file,
+                    title=job_title,
+                    **extra_kwargs,
+                )
+            else:
+                tg_file = FSInputFile(local_file_path, filename=f"{job_title[:50]}.srt")
+                msg = await bot.send_document(
+                    chat_id=channel_id,
+                    document=tg_file,
+                    caption=caption,
+                    **extra_kwargs,
+                )
+            return msg.message_id, file_size
+
+        else:
+            # Local Bot API Mode: Zero-multipart local file handoff
+            try:
+                transfer_job_dir.mkdir(parents=True, exist_ok=True)
+                os.chmod(transfer_job_dir, 0o755)
+            except OSError as e:
+                logger.debug("Failed to set chmod 0755 on %s: %s", transfer_job_dir, e)
+
+            staged_file = transfer_job_dir / Path(local_file_path).name
+            shutil.copy2(local_file_path, staged_file)
+            try:
+                os.chmod(staged_file, 0o644)
+            except OSError as e:
+                logger.debug("Failed to set chmod 0644 on %s: %s", staged_file, e)
+
+            file_uri = staged_file.resolve().as_uri()
+            logger.info("Local Bot API handoff via URI: %s", file_uri)
+
+            try:
+                if operation == OperationType.VIDEO.value or operation == "VIDEO":
+                    msg = await bot.send_video(
+                        chat_id=channel_id,
+                        video=file_uri,
+                        caption=caption,
+                        **extra_kwargs,
+                    )
+                elif operation == OperationType.AUDIO.value or operation == "AUDIO":
+                    msg = await bot.send_audio(
+                        chat_id=channel_id,
+                        audio=file_uri,
+                        title=job_title,
+                        **extra_kwargs,
+                    )
+                else:
+                    msg = await bot.send_document(
+                        chat_id=channel_id,
+                        document=file_uri,
+                        caption=caption,
+                        **extra_kwargs,
+                    )
+                return msg.message_id, file_size
+            finally:
+                # Immediate cleanup of transfer directory
+                shutil.rmtree(transfer_job_dir, ignore_errors=True)
 
     async def process_job(self, job_id: str) -> None:
         """
@@ -39,6 +176,19 @@ class JobProcessor:
         """
         job_dir = os.path.join(settings.TEMP_DIR, job_id)
         os.makedirs(job_dir, exist_ok=True)
+        transfer_job_dir = Path(settings.TRANSFER_DIR) / job_id
+
+        # Resolve active bot and mode dynamically
+        if self.bot is not None:
+            bot = self.bot
+            try:
+                r = get_redis_client()
+                m = await r.get("telegram:active:mode")
+                api_mode = m.decode("utf-8") if isinstance(m, bytes) else str(m) if m else (settings.TELEGRAM_API_MODE or "local")
+            except Exception:
+                api_mode = settings.TELEGRAM_API_MODE or "local"
+        else:
+            bot, api_mode = await TelegramClientFactory.get_client()
 
         async with AsyncSessionLocal() as session:
             # 1. Fetch Job and active requests
@@ -50,6 +200,7 @@ class JobProcessor:
                 logger.error(f"Job {job_id} not found in database")
                 await QueueService.release_active_job(job_id)
                 shutil.rmtree(job_dir, ignore_errors=True)
+                shutil.rmtree(transfer_job_dir, ignore_errors=True)
                 return
 
             req_stmt = select(JobRequest).where(JobRequest.job_id == job_id)
@@ -60,7 +211,7 @@ class JobProcessor:
                 {"chat_id": r.chat_id, "message_id": r.status_message_id}
                 for r in job_requests
             ]
-            notifier = StatusNotifier(self.bot, subscribers)
+            notifier = StatusNotifier(bot, subscribers)
 
             # Check pre-flight disk safety
             safe_disk, disk_err = SystemService.check_disk_safety()
@@ -73,6 +224,7 @@ class JobProcessor:
                 await notifier.update("❌", "Failed", disk_err, force=True)
                 await QueueService.release_active_job(job_id)
                 shutil.rmtree(job_dir, ignore_errors=True)
+                shutil.rmtree(transfer_job_dir, ignore_errors=True)
                 return
 
             # Update job status to PREPARING
@@ -91,6 +243,16 @@ class JobProcessor:
 
                 uploaded_msg_id = None
                 cache_channel_id = settings.TELEGRAM_CACHE_CHANNEL_ID
+                # Also attempt to check Redis for dynamic cache channel ID
+                try:
+                    r = get_redis_client()
+                    c_chan = await r.get("telegram:active:cache_channel_id")
+                    if c_chan:
+                        val = c_chan.decode("utf-8") if isinstance(c_chan, bytes) else str(c_chan)
+                        cache_channel_id = int(val)
+                except Exception:
+                    pass
+
                 if not cache_channel_id:
                     raise ValueError("TELEGRAM_CACHE_CHANNEL_ID is not configured!")
 
@@ -101,7 +263,6 @@ class JobProcessor:
                     target_height = job.target_height or 1080
                     target_codec = job.output_codec or "H264"
 
-                    # Download with yt-dlp
                     job.status = JobStatus.DOWNLOADING.value
                     await session.commit()
                     await notifier.update("⬇️", "Downloading", f"Resolution: {job.resolution}", force=True)
@@ -138,13 +299,11 @@ class JobProcessor:
                         await session.commit()
                         return
 
-                    # Find downloaded file
                     input_files = glob.glob(os.path.join(job_dir, "input.*"))
                     if not input_files:
                         raise FileNotFoundError("Downloaded video file not found")
                     input_file = input_files[0]
 
-                    # FFmpeg stage
                     job.status = JobStatus.PROCESSING.value
                     await session.commit()
                     await notifier.update("⚙️", "Processing", f"Applying {target_codec} container...", force=True)
@@ -159,24 +318,23 @@ class JobProcessor:
                     if not process_ok or not os.path.exists(output_file):
                         raise RuntimeError("FFmpeg processing failed")
 
-                    # Upload to Cache Channel
                     job.status = JobStatus.UPLOADING.value
                     await session.commit()
                     await notifier.update("☁️", "Uploading", "Sending media to secure cache...", force=True)
 
-                    tg_file = FSInputFile(output_file, filename=f"{job.title[:60]}.mp4")
                     caption_text = f"🎬 <b>{job.title}</b>\n({target_codec} {job.resolution})"
-
-                    upload_msg = await self.bot.send_video(
-                        chat_id=cache_channel_id,
-                        video=tg_file,
+                    uploaded_msg_id, file_size = await self._send_media_to_cache(
+                        bot=bot,
+                        api_mode=api_mode,
+                        channel_id=cache_channel_id,
+                        local_file_path=output_file,
+                        operation=job.operation,
+                        job_id=job_id,
+                        job_title=job.title,
                         caption=caption_text,
-                        supports_streaming=True,
+                        extra_kwargs={"supports_streaming": True},
                     )
-                    uploaded_msg_id = upload_msg.message_id
-                    file_size = os.path.getsize(output_file)
 
-                    # Save Cache Entry in DB
                     cache_entry = await CacheService.save_cache_entry(
                         session=session,
                         cache_key=job.cache_key,
@@ -221,7 +379,6 @@ class JobProcessor:
                     thumb_files = glob.glob(os.path.join(job_dir, "audio.*.jpg")) or glob.glob(os.path.join(job_dir, "audio.*.webp"))
                     cover_path = thumb_files[0] if thumb_files else None
 
-                    # FFmpeg MP3 stage
                     job.status = JobStatus.PROCESSING.value
                     await session.commit()
                     await notifier.update("⚙️", "Processing", "Converting to MP3 with ID3 tags...", force=True)
@@ -240,14 +397,15 @@ class JobProcessor:
                     await session.commit()
                     await notifier.update("☁️", "Uploading", "Sending audio to secure cache...", force=True)
 
-                    tg_audio = FSInputFile(output_mp3, filename=f"{job.title[:60]}.mp3")
-                    upload_msg = await self.bot.send_audio(
-                        chat_id=cache_channel_id,
-                        audio=tg_audio,
-                        title=job.title,
+                    uploaded_msg_id, file_size = await self._send_media_to_cache(
+                        bot=bot,
+                        api_mode=api_mode,
+                        channel_id=cache_channel_id,
+                        local_file_path=output_mp3,
+                        operation=job.operation,
+                        job_id=job_id,
+                        job_title=job.title,
                     )
-                    uploaded_msg_id = upload_msg.message_id
-                    file_size = os.path.getsize(output_mp3)
 
                     cache_entry = await CacheService.save_cache_entry(
                         session=session,
@@ -293,7 +451,6 @@ class JobProcessor:
                     with open(sub_files[0], "r", encoding="utf-8", errors="ignore") as sf:
                         raw_sub_content = sf.read()
 
-                    # Convert / Normalize to clean SRT
                     parsed_segs = AIService.parse_srt(raw_sub_content)
                     if not parsed_segs:
                         raise ValueError("Failed to parse subtitle segments")
@@ -320,14 +477,17 @@ class JobProcessor:
                     await session.commit()
                     await notifier.update("☁️", "Uploading", "Sending subtitles to cache...", force=True)
 
-                    tg_sub = FSInputFile(out_srt_file, filename=f"{job.title[:50]}_{target_lang}.srt")
-                    upload_msg = await self.bot.send_document(
-                        chat_id=cache_channel_id,
-                        document=tg_sub,
-                        caption=f"💬 <b>{job.title}</b> ({target_lang} Subtitle)",
+                    caption_text = f"💬 <b>{job.title}</b> ({target_lang} Subtitle)"
+                    uploaded_msg_id, file_size = await self._send_media_to_cache(
+                        bot=bot,
+                        api_mode=api_mode,
+                        channel_id=cache_channel_id,
+                        local_file_path=out_srt_file,
+                        operation=job.operation,
+                        job_id=job_id,
+                        job_title=f"{job.title[:50]}_{target_lang}",
+                        caption=caption_text,
                     )
-                    uploaded_msg_id = upload_msg.message_id
-                    file_size = os.path.getsize(out_srt_file)
 
                     cache_entry = await CacheService.save_cache_entry(
                         session=session,
@@ -356,14 +516,11 @@ class JobProcessor:
                 current_requests = list(fresh_req_res.scalars().all())
 
                 for req in current_requests:
-                    # RE-CHECK MUST-JOIN AUTHORITATIVELY FOR EACH SUBSCRIBER
                     is_auth, missing_channels = await MustJoinService.require_must_join(
-                        self.bot, session, req.user_id, force_authoritative=True
+                        bot, session, req.user_id, force_authoritative=True
                     )
 
                     if not is_auth:
-                        # User left required channel during processing!
-                        # Mark as WAITING_FOR_AUTHORIZATION and do not deliver
                         logger.warning(
                             f"User {req.user_id} left channel before delivery. Setting WAITING_FOR_AUTHORIZATION."
                         )
@@ -372,7 +529,7 @@ class JobProcessor:
 
                         kb = build_must_join_keyboard(missing_channels)
                         try:
-                            await self.bot.send_message(
+                            await bot.send_message(
                                 chat_id=req.chat_id,
                                 text=(
                                     "🔒 <b>Your file is ready!</b>\n"
@@ -384,19 +541,17 @@ class JobProcessor:
                         except Exception:
                             pass
                     else:
-                        # User is authorized: deliver via copyMessage!
                         delivered, err = await CacheService.deliver_cached_media(
-                            self.bot, session, cache_entry, req.chat_id
+                            bot, session, cache_entry, req.chat_id
                         )
                         if delivered:
                             req.delivery_status = DeliveryStatus.DELIVERED.value
                             req.delivered_at = datetime.now(timezone.utc)
                             await session.commit()
 
-                            # Edit status message to complete
                             if req.status_message_id:
                                 try:
-                                    await self.bot.edit_message_text(
+                                    await bot.edit_message_text(
                                         chat_id=req.chat_id,
                                         message_id=req.status_message_id,
                                         text="✅ <b>Download complete! Delivered above.</b>",
@@ -417,12 +572,12 @@ class JobProcessor:
 
             finally:
                 # GUARANTEED CLEANUP:
-                # 1. Delete local temporary files
                 shutil.rmtree(job_dir, ignore_errors=True)
-                logger.info(f"Cleaned temp directory for job {job_id}")
+                shutil.rmtree(transfer_job_dir, ignore_errors=True)
+                logger.info(f"Cleaned directories for job {job_id}")
 
-                # 2. Release active slot in Redis
                 await QueueService.release_active_job(job_id)
-
-                # 3. Release cache lock
                 await QueueService.release_cache_lock(job.cache_key)
+
+                # Report disk telemetry
+                await self.report_telemetry()

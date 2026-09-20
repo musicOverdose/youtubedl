@@ -122,3 +122,14 @@ class MustJoinService:
             return False, f"Cannot access channel: {e}"
         except TelegramAPIError as e:
             return False, f"Telegram error: {e}"
+
+    @classmethod
+    async def get_rendered_must_join_message(
+        cls, session: AsyncSession, first_name: Optional[str], missing_channels: List[RequiredChannel]
+    ) -> str:
+        """Render the customizable Must-Join template with dynamic tags."""
+        from src.services.setting_service import SettingService
+        template = await SettingService.get_must_join_message(session)
+        channel_list_str = "\n".join([f"• <b>{c.title}</b>" for c in missing_channels])
+        name = first_name or "User"
+        return template.replace("{first_name}", name).replace("{channel_list}", channel_list_str)

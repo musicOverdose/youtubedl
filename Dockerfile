@@ -31,13 +31,21 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Create shared Unix groups:
+# GID 1001: ytdl-runtime (shared across Web, Bot, Worker for /config/runtime)
+# GID 101:  telegram-bot-api (shared with Local Bot API for /config/bot-api)
+RUN groupadd -g 1001 ytdl-runtime \
+    && groupadd -g 101 telegram-bot-api \
+    && usermod -aG ytdl-runtime,telegram-bot-api root
+
 # Copy application source code
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 
-# Create temporary media directory
-RUN mkdir -p /tmp/ytdl /config/secrets && chmod -R 777 /tmp/ytdl
+# Create directory hierarchy with proper permissions
+RUN mkdir -p /tmp/ytdl /transfer /config/master /config/runtime /config/state /config/bot-api /config/secrets \
+    && chmod 755 /transfer /tmp/ytdl
 
 # ==============================================================================
 # Target: Web Administration Panel

@@ -54,7 +54,67 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - config_data:/config/secrets
+      - web_secrets:/config/master:rw
+      - bot_runtime_secrets:/config/runtime:rw
+      - bot_runtime_state:/config/state:rw
+      - local_api_config:/config/bot-api:rw
+      - cookie_secrets:/config/secrets:rw
+    networks:
+      - ytdl_network
+
+  telegram-bot-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.localbotapi
+    container_name: ytdl_local_bot_api
+    restart: unless-stopped
+    user: "101:101"
+    volumes:
+      - local_api_config:/config/bot-api:ro
+      - telegram_upload_tmp:/transfer:ro
+      - telegram_bot_api_temp:/tmp/telegram-bot-api:rw
+      - telegram_bot_api_data:/var/lib/telegram-bot-api:rw
+    networks:
+      - ytdl_network
+
+  telegram-bot-api-telemetry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: ytdl_local_bot_api_telemetry
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - telegram_bot_api_temp:/tmp/telegram-bot-api:ro
+      - telegram_bot_api_data:/var/lib/telegram-bot-api:ro
+    command: >
+      python3 -c "
+      import os, time, redis
+      r = redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0'))
+      def du(path):
+          total = 0
+          if os.path.exists(path):
+              for root, _, files in os.walk(path):
+                  for f in files:
+                      fp = os.path.join(root, f)
+                      if os.path.exists(fp) and not os.path.islink(fp):
+                          total += os.path.getsize(fp)
+          return total
+      while True:
+          try:
+              data_bytes = du('/var/lib/telegram-bot-api')
+              temp_bytes = du('/tmp/telegram-bot-api')
+              r.set('telemetry:local_bot_api:data_bytes', str(data_bytes))
+              r.set('telemetry:local_bot_api:temp_bytes', str(temp_bytes))
+          except Exception:
+              pass
+          time.sleep(30)
+      "
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - ytdl_network
 
@@ -71,6 +131,9 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://ytdl_user:ytdl_secure_pass@postgres:5432/ytdl_db}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - bot_runtime_secrets:/config/runtime:ro
+      - bot_runtime_state:/config/state:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,8 +158,10 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://ytdl_user:ytdl_secure_pass@postgres:5432/ytdl_db}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
-      - temp_data:/tmp/ytdl
-      - config_data:/config/secrets:ro
+      - bot_runtime_secrets:/config/runtime:ro
+      - cookie_secrets:/config/secrets:ro
+      - temp_data:/tmp/ytdl:rw
+      - telegram_upload_tmp:/transfer:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,5 +177,12 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  web_secrets:
+  bot_runtime_secrets:
+  bot_runtime_state:
+  local_api_config:
+  cookie_secrets:
+  telegram_upload_tmp:
+  telegram_bot_api_temp:
+  telegram_bot_api_data:
   temp_data:
-  config_data:

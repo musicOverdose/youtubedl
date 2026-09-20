@@ -92,7 +92,7 @@ async def get_prometheus_metrics(session: AsyncSession = Depends(get_db)):
 
 @router.get("/api/system")
 async def get_system_info(admin: dict = Depends(get_current_admin)):
-    stats = SystemService.get_system_stats()
+    stats = await SystemService.get_system_stats()
     tools = await SystemService.get_tool_versions()
     return {
         "stats": stats,

@@ -68,6 +68,7 @@ function loadSection(name) {
     case 'jobs': loadJobs(); break;
     case 'cache': loadCache(); break;
     case 'users': loadUsers(); break;
+    case 'telegram': loadTelegramConfig(); break;
     case 'must-join': loadMustJoin(); break;
     case 'youtube': loadYouTube(); break;
     case 'cookies': loadCookies(); break;
@@ -326,6 +327,15 @@ async function loadMustJoin() {
         </tr>
       `).join('');
     }
+
+    // Load custom Must-Join template message
+    try {
+      const msgData = await API.get('/api/must-join/message');
+      const area = document.getElementById('mj-custom-msg-area');
+      if (area && msgData.message) {
+        area.value = msgData.message;
+      }
+    } catch (e) {}
   } catch (err) {}
 }
 
@@ -580,5 +590,239 @@ function getBadgeClass(status) {
     case 'CANCELLED': return 'badge-secondary';
     case 'QUEUED': return 'badge-warning';
     default: return 'badge-info';
+  }
+}
+
+// =============================================================================
+// TELEGRAM ARCHITECTURE & SETTINGS
+// =============================================================================
+let currentTelegramConfig = {};
+let targetMigrationMode = 'local';
+
+async function loadTelegramConfig() {
+  try {
+    const data = await API.get('/api/telegram/config');
+    currentTelegramConfig = data;
+
+    // Set radio mode
+    const radios = document.getElementsByName('tg-mode-radio');
+    for (const r of radios) {
+      if (r.value === data.mode) r.checked = true;
+    }
+    onTelegramModeChange();
+
+    document.getElementById('tg-derived-endpoint').value = data.derived_endpoint || 'http://telegram-bot-api:8081';
+    document.getElementById('tg-token-masked-display').innerText = data.bot_token_masked || 'Not Set';
+    document.getElementById('tg-api-id').value = data.api_id || '';
+    document.getElementById('tg-hash-masked-display').innerText = data.api_hash_masked || 'Not Set';
+    document.getElementById('tg-cache-channel').value = data.cache_channel_id || '';
+    document.getElementById('stat-tg-version').innerText = `v${data.config_version || 1}`;
+
+    // Update badges
+    const badgeBot = document.getElementById('badge-tg-bot');
+    if (data.is_configured) {
+      badgeBot.className = 'badge badge-success';
+      badgeBot.innerText = '🟢 Configured';
+    } else {
+      badgeBot.className = 'badge badge-danger';
+      badgeBot.innerText = '🔴 Not Configured';
+    }
+
+    const badgeMode = document.getElementById('badge-tg-mode');
+    badgeMode.innerText = data.mode === 'local' ? 'Local Bot API' : 'Cloud Bot API';
+    badgeMode.className = data.mode === 'local' ? 'badge badge-info' : 'badge badge-warning';
+
+    // Test Local API connectivity in background
+    if (data.mode === 'local') {
+      try {
+        await API.post('/api/telegram/test-local-api', {});
+        const badgeLocal = document.getElementById('badge-tg-local');
+        badgeLocal.className = 'badge badge-success';
+        badgeLocal.innerText = '🟢 Healthy';
+      } catch (e) {
+        const badgeLocal = document.getElementById('badge-tg-local');
+        badgeLocal.className = 'badge badge-danger';
+        badgeLocal.innerText = '🔴 Unreachable';
+      }
+    } else {
+      const badgeLocal = document.getElementById('badge-tg-local');
+      badgeLocal.className = 'badge badge-secondary';
+      badgeLocal.innerText = '⚪ Standby / Disabled';
+    }
+
+    // Load disk telemetry stats from /api/system
+    try {
+      const sysData = await API.get('/api/system');
+      if (sysData.stats) {
+        document.getElementById('stat-transfer-usage').innerText = `${Math.round(sysData.stats.worker_transfer_gb * 1024)} MB`;
+        document.getElementById('stat-worker-temp').innerText = `${Math.round(sysData.stats.worker_temp_gb * 1024)} MB`;
+        document.getElementById('stat-botapi-data').innerText = `${Math.round(sysData.stats.bot_api_data_gb * 1024)} MB`;
+        document.getElementById('stat-host-free').innerText = `${sysData.stats.disk_free_gb} GB`;
+      }
+    } catch (e) {}
+  } catch (err) {
+    console.error('Failed to load telegram config:', err);
+  }
+}
+
+function onTelegramModeChange() {
+  const selectedMode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const localGroup = document.getElementById('tg-local-credentials-group');
+  const endpointInput = document.getElementById('tg-derived-endpoint');
+
+  if (selectedMode === 'local') {
+    if (localGroup) localGroup.style.display = 'block';
+    if (endpointInput) endpointInput.value = 'http://telegram-bot-api:8081';
+  } else {
+    if (localGroup) localGroup.style.display = 'none';
+    if (endpointInput) endpointInput.value = 'https://api.telegram.org';
+  }
+}
+
+function toggleInputMask(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+function showTelegramAlert(msg, isSuccess = true) {
+  const el = document.getElementById('telegram-alert');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = isSuccess ? 'rgba(40,167,69,0.15)' : 'rgba(220,53,69,0.15)';
+  el.style.border = isSuccess ? '1px solid #28a745' : '1px solid #dc3545';
+  el.style.color = isSuccess ? '#28a745' : '#dc3545';
+  el.innerText = msg;
+}
+
+async function saveTelegramConfig() {
+  const saveBtn = document.getElementById('btn-save-telegram');
+  saveBtn.disabled = true;
+  saveBtn.innerText = 'Validating & Saving...';
+
+  const mode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const token = document.getElementById('tg-bot-token').value.trim();
+  const apiId = document.getElementById('tg-api-id').value.trim();
+  const apiHash = document.getElementById('tg-api-hash').value.trim();
+  const cacheChannel = document.getElementById('tg-cache-channel').value.trim();
+
+  const payload = {
+    mode: mode,
+    bot_token: token || undefined,
+    api_id: apiId ? parseInt(apiId, 10) : undefined,
+    api_hash: apiHash || undefined,
+    cache_channel_id: cacheChannel || undefined,
+  };
+
+  try {
+    const res = await API.post('/api/telegram/save', payload);
+    showTelegramAlert(`✅ ${res.message}`, true);
+    document.getElementById('tg-bot-token').value = '';
+    document.getElementById('tg-api-hash').value = '';
+    await loadTelegramConfig();
+  } catch (err) {
+    if (err.message && err.message.includes('Conflict')) {
+      showTelegramAlert('⚠️ Conflict: Another Telegram configuration update is already in progress. Please retry in a few seconds.', false);
+    } else {
+      showTelegramAlert(`❌ Error: ${err.message}`, false);
+    }
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.innerText = 'Save Telegram Configuration';
+  }
+}
+
+async function testBotToken() {
+  const mode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const token = document.getElementById('tg-bot-token').value.trim();
+  try {
+    const res = await API.post('/api/telegram/test-token', { bot_token: token || undefined, mode: mode });
+    alert(`✅ Bot Token Valid!\nBot: @${res.username} (${res.first_name})\nID: ${res.bot_id}\nEndpoint: ${res.endpoint}`);
+  } catch (err) {
+    alert(`❌ Bot Token Test Failed:\n${err.message}`);
+  }
+}
+
+async function testLocalBotAPI() {
+  try {
+    const res = await API.post('/api/telegram/test-local-api', {});
+    alert(`✅ Local Bot API Server is reachable at ${res.host}:${res.port}!`);
+  } catch (err) {
+    alert(`❌ Local Bot API Test Failed:\n${err.message}`);
+  }
+}
+
+async function testCacheChannel() {
+  const mode = document.querySelector('input[name="tg-mode-radio"]:checked')?.value || 'local';
+  const token = document.getElementById('tg-bot-token').value.trim();
+  const channelId = document.getElementById('tg-cache-channel').value.trim();
+  if (!channelId) {
+    alert('Please enter a Cache Channel ID to test.');
+    return;
+  }
+  try {
+    const res = await API.post('/api/telegram/test-channel', {
+      channel_id: channelId,
+      bot_token: token || undefined,
+      mode: mode,
+    });
+    alert(`✅ Cache Channel Access Verified!\nChannel ID: ${res.channel_id}`);
+  } catch (err) {
+    alert(`❌ Cache Channel Test Failed:\n${err.message}`);
+  }
+}
+
+function openMigrationModal(targetMode) {
+  targetMigrationMode = targetMode;
+  const modal = document.getElementById('modal-migration');
+  const warn = document.getElementById('migration-warning');
+  const desc = document.getElementById('migration-desc');
+
+  if (targetMode === 'local') {
+    warn.innerText = '⚠️ Caution: Migrating from Cloud to Local Bot API calls logOut() on Telegram Cloud. Returning to Cloud API is blocked by Telegram for 10 minutes following that operation.';
+    desc.innerText = 'This will log out the cloud session, verify Local Bot API server connectivity, and transition all polling and file uploads to the internal Local Bot API server (up to 2000 MB).';
+  } else {
+    warn.innerText = '⚠️ Note: Cloud Bot API limits uploads to 50 MB. Local Bot API will enter standby mode.';
+    desc.innerText = 'This will transition the bot session to Telegram Cloud API (https://api.telegram.org). Any media file exceeding 50 MB will be rejected.';
+  }
+  modal.classList.add('active');
+}
+
+async function executeMigration() {
+  const btn = document.getElementById('btn-confirm-migration');
+  btn.disabled = true;
+  btn.innerText = 'Migrating...';
+  try {
+    const res = await API.post('/api/telegram/migrate', { target_mode: targetMigrationMode });
+    alert(`✅ Migration Complete!\n${res.message}`);
+    document.getElementById('modal-migration').classList.remove('active');
+    await loadTelegramConfig();
+  } catch (err) {
+    alert(`❌ Migration Failed:\n${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = 'Confirm & Migrate';
+  }
+}
+
+async function saveMustJoinMessage() {
+  const msg = document.getElementById('mj-custom-msg-area').value;
+  try {
+    await API.post('/api/must-join/message', { message: msg });
+    alert('✅ Custom Must-Join message saved successfully!');
+  } catch (err) {
+    alert(`❌ Failed to save: ${err.message}`);
+  }
+}
+
+async function resetMustJoinMessage() {
+  if (confirm('Reset Must-Join template message to system default?')) {
+    try {
+      const res = await API.post('/api/must-join/message/reset', {});
+      document.getElementById('mj-custom-msg-area').value = res.message;
+      alert('✅ Reset to default template!');
+    } catch (err) {
+      alert(`❌ Failed to reset: ${err.message}`);
+    }
   }
 }

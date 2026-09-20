@@ -14,14 +14,25 @@ class Settings(BaseSettings):
     BOT_TOKEN: str = Field(default="", description="Telegram Bot API Token")
     TELEGRAM_API_ID: Optional[int] = Field(default=None, description="Telegram API ID")
     TELEGRAM_API_HASH: Optional[str] = Field(default=None, description="Telegram API Hash")
+    TELEGRAM_API_MODE: str = Field(default="local", description="Telegram API Mode: local or cloud")
     TELEGRAM_API_BASE_URL: str = Field(
-        default="https://api.telegram.org",
+        default="http://telegram-bot-api:8081",
         description="Telegram Bot API Base URL (cloud or local bot API server)"
     )
     TELEGRAM_CACHE_CHANNEL_ID: Optional[int] = Field(
         default=None,
         description="Private Telegram channel ID used for media caching"
     )
+
+    # Runtime File Paths & Segregated Volumes
+    MASTER_KEY_FILE: str = Field(default="/config/master/master.key")
+    RUNTIME_BOT_TOKEN_FILE: str = Field(default="/config/runtime/bot-token")
+    RUNTIME_READY_FILE: str = Field(default="/config/state/READY")
+    LOCAL_BOT_API_ENV_FILE: str = Field(default="/config/bot-api/local-bot-api.env")
+    LOCAL_BOT_API_TRIGGER_FILE: str = Field(default="/config/bot-api/restart-trigger")
+    TRANSFER_DIR: str = Field(default="/transfer")
+    LOCAL_BOT_API_DATA_DIR: str = Field(default="/var/lib/telegram-bot-api")
+    LOCAL_BOT_API_TEMP_DIR: str = Field(default="/tmp/telegram-bot-api")
 
     # Database & Redis
     DATABASE_URL: str = Field(
