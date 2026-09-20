@@ -17,20 +17,9 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 async def login(req: LoginRequest, response: Response, session: AsyncSession = Depends(get_db)):
-    # Validate username
-    if req.username != settings.ADMIN_USERNAME:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-        )
+    from src.services.auth_service import AuthService
 
-    # Check password against configured hash or bootstrap password
-    authenticated = False
-    if settings.ADMIN_PASSWORD_HASH:
-        authenticated = verify_password(req.password, settings.ADMIN_PASSWORD_HASH)
-    elif settings.ADMIN_PASSWORD:
-        authenticated = (req.password == settings.ADMIN_PASSWORD)
-
+    authenticated = await AuthService.authenticate_admin(req.username, req.password, session=session)
     if not authenticated:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

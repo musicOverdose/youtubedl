@@ -51,10 +51,10 @@ RUN mkdir -p /tmp/ytdl /transfer /config/master /config/runtime /config/state /c
 # Target: Web Administration Panel
 # ==============================================================================
 FROM base AS web
-EXPOSE 8085
+EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8085/health || exit 1
-CMD ["uvicorn", "src.web.app:app", "--host", "0.0.0.0", "--port", "8085"]
+  CMD curl -f http://localhost:8080/health || exit 1
+CMD ["uvicorn", "src.web.app:app", "--host", "0.0.0.0", "--port", "8080"]
 
 # ==============================================================================
 # Target: Telegram Bot

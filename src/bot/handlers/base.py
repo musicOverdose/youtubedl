@@ -1,5 +1,8 @@
+import html
 from datetime import datetime, timezone
 from aiogram import Router
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 from sqlalchemy import select
@@ -7,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import AsyncSessionLocal
 from src.core.logger import setup_logger
 from src.models.user import User
+from src.services.setting_service import DEFAULT_WELCOME_MESSAGE, SettingService
 
 logger = setup_logger("bot_base")
 base_router = Router()
@@ -38,19 +42,24 @@ async def get_or_create_user(session: AsyncSession, msg_user) -> User:
 @base_router.message(CommandStart())
 async def cmd_start(message: Message):
     async with AsyncSessionLocal() as session:
-        await get_or_create_user(session, message.from_user)
+        if message.from_user:
+            await get_or_create_user(session, message.from_user)
+        template = await SettingService.get_welcome_message(session)
 
-    welcome_text = (
-        f"👋 Hello, <b>{message.from_user.first_name}</b>!\n\n"
-        "Send me any YouTube video or Shorts link, and I will download it for you in high quality.\n\n"
-        "✨ <b>Features:</b>\n"
-        "• Exact Video Resolutions (up to 4K)\n"
-        "• 🎬 H.264 & 📦 H.265 / AAC options\n"
-        "• 🎵 High-quality MP3 with ID3 cover art\n"
-        "• 💬 Subtitles in 🇬🇧 English & 🇮🇷 Persian\n"
-        "• Instant delivery for cached media"
-    )
-    await message.answer(welcome_text)
+    raw_name = message.from_user.first_name if (message.from_user and message.from_user.first_name) else "User"
+    safe_name = html.escape(raw_name)
+    welcome_text = template.replace("{first_name}", safe_name)
+
+    try:
+        await message.answer(welcome_text, parse_mode=ParseMode.HTML)
+    except TelegramBadRequest as e:
+        err_msg = str(e).lower()
+        if "can't parse entities" in err_msg or "entity" in err_msg:
+            logger.warning("Failed to render custom welcome message due to HTML entity error: %s. Falling back to default.", e)
+            fallback_text = DEFAULT_WELCOME_MESSAGE.replace("{first_name}", safe_name)
+            await message.answer(fallback_text, parse_mode=ParseMode.HTML)
+        else:
+            raise
 
 
 @base_router.message(Command("help"))

@@ -614,9 +614,14 @@ async function loadTelegramConfig() {
     document.getElementById('tg-derived-endpoint').value = data.derived_endpoint || 'http://telegram-bot-api:8081';
     document.getElementById('tg-token-masked-display').innerText = data.bot_token_masked || 'Not Set';
     document.getElementById('tg-api-id').value = data.api_id || '';
+    const idDisplay = document.getElementById('tg-id-display');
+    if (idDisplay) idDisplay.innerText = data.api_id ? String(data.api_id) : 'Not Set';
     document.getElementById('tg-hash-masked-display').innerText = data.api_hash_masked || 'Not Set';
     document.getElementById('tg-cache-channel').value = data.cache_channel_id || '';
     document.getElementById('stat-tg-version').innerText = `v${data.config_version || 1}`;
+
+    // Load dynamic welcome message
+    await loadWelcomeMessage();
 
     // Update badges
     const badgeBot = document.getElementById('badge-tg-bot');
@@ -826,3 +831,80 @@ async function resetMustJoinMessage() {
     }
   }
 }
+
+// =============================================================================
+// TELEGRAM /start WELCOME MESSAGE
+// =============================================================================
+
+async function loadWelcomeMessage() {
+  try {
+    const res = await API.get('/api/telegram/welcome-message');
+    const area = document.getElementById('tg-welcome-msg-area');
+    if (area) {
+      area.value = res.message || '';
+    }
+  } catch (err) {
+    console.error('Failed to load welcome message:', err);
+  }
+}
+
+function showWelcomeAlert(msg, isSuccess = true) {
+  const el = document.getElementById('tg-welcome-alert');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.background = isSuccess ? 'rgba(40,167,69,0.15)' : 'rgba(220,53,69,0.15)';
+  el.style.border = isSuccess ? '1px solid #28a745' : '1px solid #dc3545';
+  el.style.color = isSuccess ? '#28a745' : '#dc3545';
+  el.innerText = msg;
+}
+
+async function saveWelcomeMessage() {
+  const btn = document.getElementById('btn-save-welcome');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = 'Validating & Saving...';
+  }
+  const area = document.getElementById('tg-welcome-msg-area');
+  const msg = area ? area.value : '';
+
+  try {
+    const res = await API.post('/api/telegram/welcome-message', { message: msg });
+    if (area) {
+      area.value = res.message;
+    }
+    showWelcomeAlert('✅ Welcome message saved successfully!', true);
+  } catch (err) {
+    showWelcomeAlert(`❌ Failed to save welcome message: ${err.message}`, false);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = 'Save Welcome Message';
+    }
+  }
+}
+
+async function resetWelcomeMessage() {
+  if (confirm('Reset /start welcome message to system default?')) {
+    const btn = document.getElementById('btn-reset-welcome');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = 'Resetting...';
+    }
+    try {
+      const res = await API.post('/api/telegram/welcome-message/reset', {});
+      const area = document.getElementById('tg-welcome-msg-area');
+      if (area) {
+        area.value = res.message || '';
+      }
+      showWelcomeAlert('✅ Welcome message reset to default template!', true);
+    } catch (err) {
+      showWelcomeAlert(`❌ Failed to reset welcome message: ${err.message}`, false);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = 'Reset to Default';
+      }
+    }
+  }
+}
+

@@ -69,8 +69,9 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
   - **Strict 5-step cache channel validation**: Probes channel eligibility via `getChat` and `getChatAdministrators` checking `can_post_messages` without intrusive `sendChatAction` calls.
   - **Service-reported telemetry**: Worker and Local Bot API report disk metrics into Redis; no cross-service storage volume mounts into Web Admin.
 - 🖥️ **Full Web Administration Panel**:
-  - Modern, responsive dashboard on port `8085` protected by Argon2id authentication.
+  - Modern, responsive dashboard on host port `8087` (container port `8080`) protected by Argon2id authentication.
   - Interactive Telegram Configuration panel with live API testing, derived endpoints, and zero-downtime hot reloading.
+  - Editable `/start` welcome message with Telegram HTML validation and safe first name placeholder.
 
 ---
 
@@ -129,7 +130,7 @@ Caption: VIDEO TITLE ONLY
 ```mermaid
 flowchart TD
     User(["Telegram User"]) <-->|"Commands & Callbacks"| Bot["Bot Service (aiogram 3)"]
-    Admin(["Administrator"]) <-->|"Web UI :8085"| Web["Web Admin (FastAPI + SPA)"]
+    Admin(["Administrator"]) <-->|"Web UI :8087"| Web["Web Admin (FastAPI + SPA)"]
 
     subgraph Storage ["Segregated Storage & State"]
         PG[("PostgreSQL 17 (ACTIVE/PENDING Config & Migrations)")]
@@ -260,17 +261,15 @@ The Telegram integration is engineered around strict operational consistency and
    - **Compose path**: `docker-compose.yml`
 3. In the **Environment variables** section, define:
    ```env
-   BOT_TOKEN=your_telegram_bot_token
-   TELEGRAM_API_ID=your_api_id
-   TELEGRAM_API_HASH=your_api_hash
-   TELEGRAM_CACHE_CHANNEL_ID=-1001234567890
-   WEB_PORT=8085
+   # Web Admin Host Port (defaults to 8087, forwarding to container port 8080)
+   WEB_HOST_PORT=8087
    ADMIN_USERNAME=admin
    ADMIN_PASSWORD=SetAStrongPasswordHere
    SECRET_KEY=generate_a_random_64_character_string
    MAX_ACTIVE_JOBS=1
    MAX_VIDEO_DURATION_SECONDS=7200
    ```
+   *(Telegram bot credentials can also be configured and managed dynamically via the Web Admin Panel)*
 4. Click **Deploy the stack**.
 
 ---
@@ -297,7 +296,7 @@ docker compose logs -f
 
 ## 🎛️ Web Administration Panel
 
-Access the dashboard at `http://<your-server-ip>:8085`.
+Access the dashboard at `http://<your-server-ip>:8087`.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -309,6 +308,7 @@ Access the dashboard at `http://<your-server-ip>:8085`.
 │ ⚡ Cache       │ Inspect cached items, hit stats, delete     │
 │ 👥 Users      │ User list, job statistics, ban/unban        │
 │ 🔒 Must Join  │ Enforce channel membership, bot status test │
+│ 💬 Welcome    │ Editable /start message with HTML safety    │
 │ 📺 YouTube    │ Default resolutions, playlist limits        │
 │ 🍪 Cookies    │ Netscape cookies.txt upload, paste, test    │
 │ 🤖 AI Trans   │ OpenAI-compatible subtitle translation      │
@@ -325,14 +325,16 @@ Access the dashboard at `http://<your-server-ip>:8085`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `BOT_TOKEN` | *Required* | Telegram Bot token from @BotFather |
-| `TELEGRAM_API_ID` | *Required* | Telegram App ID from my.telegram.org |
-| `TELEGRAM_API_HASH` | *Required* | Telegram App Hash from my.telegram.org |
-| `TELEGRAM_CACHE_CHANNEL_ID` | *Required* | Channel ID for permanent media cache |
-| `TELEGRAM_API_BASE_URL` | `https://api.telegram.org` | Bot API URL (or local bot API server) |
-| `WEB_PORT` | `8085` | Web administration panel port |
+| `BOT_TOKEN` | *Optional / Web Admin* | Telegram Bot token (configurable via Web Admin) |
+| `TELEGRAM_API_ID` | *Optional / Web Admin* | Telegram App ID (configurable via Web Admin) |
+| `TELEGRAM_API_HASH` | *Optional / Web Admin* | Telegram App Hash (configurable via Web Admin) |
+| `TELEGRAM_CACHE_CHANNEL_ID` | *Optional / Web Admin* | Channel ID for permanent media cache |
+| `TELEGRAM_API_BASE_URL` | `http://telegram-bot-api:8081` | Bot API URL (or local bot API server) |
+| `WEB_HOST_PORT` | `8087` | Web administration panel host port (container: 8080) |
 | `ADMIN_USERNAME` | `admin` | Administrator login username |
-| `ADMIN_PASSWORD` | `admin123` | Initial administrator login password |
+| `ADMIN_PASSWORD` | *Required on fresh install* | Initial administrator login password (hashed with Argon2id) |
+| `ADMIN_PASSWORD_HASH` | *None* | Precomputed Argon2id hash for admin password |
+| `ADMIN_PASSWORD_RESET` | `false` | Set to `true` to reset DB password from env on startup |
 | `SECRET_KEY` | *Auto* | Secret key for signing session tokens |
 | `MAX_ACTIVE_JOBS` | `1` | Global concurrent processing limit |
 | `MAX_CONCURRENT_PER_USER` | `1` | Max concurrent jobs per user |

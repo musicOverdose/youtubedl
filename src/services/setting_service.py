@@ -3,6 +3,7 @@ import json
 import re
 import socket
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -41,6 +42,7 @@ SETTING_API_MODE = "telegram_api_mode"
 SETTING_CACHE_CHANNEL_ID = "telegram_cache_channel_id"
 SETTING_CONFIG_VERSION = "telegram_config_version"
 SETTING_MUST_JOIN_MSG = "must_join_message"
+SETTING_WELCOME_MSG = "welcome_message"
 
 DEFAULT_MUST_JOIN_MESSAGE = (
     "👋 Hello {first_name}!\n\n"
@@ -48,6 +50,125 @@ DEFAULT_MUST_JOIN_MESSAGE = (
     "{channel_list}\n\n"
     "After joining, please send your link again!"
 )
+
+DEFAULT_WELCOME_MESSAGE = (
+    "👋 Hello, <b>{first_name}</b>!\n\n"
+    "Send me any YouTube video or Shorts link, and I will download it for you in high quality.\n\n"
+    "✨ <b>Features:</b>\n"
+    "• Exact Video Resolutions (up to 4K)\n"
+    "• 🎬 H.264 & 📦 H.265 / AAC options\n"
+    "• 🎵 High-quality MP3 with ID3 cover art\n"
+    "• 💬 Subtitles in 🇬🇧 English & 🇮🇷 Persian\n"
+    "• Instant delivery for cached media"
+)
+
+
+class TelegramHTMLValidator(HTMLParser):
+    ALLOWED_TAGS = {
+        "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+        "span", "tg-spoiler", "tg-emoji", "a", "code", "pre",
+        "blockquote", "expandable_blockquote",
+    }
+    NO_ATTR_TAGS = {
+        "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+        "tg-spoiler", "blockquote", "expandable_blockquote",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.stack = []
+        self.errors = []
+        self.in_pre = False
+
+    def handle_starttag(self, tag, attrs):
+        lower_tag = tag.lower()
+        if lower_tag not in self.ALLOWED_TAGS:
+            self.errors.append(f"Tag <{tag}> is not supported by Telegram HTML.")
+            return
+
+        if self.in_pre:
+            if lower_tag != "code":
+                self.errors.append(f"Tag <{tag}> cannot be nested inside <pre>.")
+
+        if lower_tag == "pre":
+            if self.stack:
+                self.errors.append("<pre> cannot be nested inside another tag.")
+            self.in_pre = True
+
+        attrs_dict = dict(attrs)
+
+        if lower_tag in self.NO_ATTR_TAGS:
+            if attrs:
+                self.errors.append(f"Tag <{tag}> does not allow attributes.")
+        elif lower_tag == "a":
+            if "href" not in attrs_dict or not attrs_dict["href"].strip():
+                self.errors.append("Tag <a> requires a non-empty 'href' attribute.")
+            for attr_name in attrs_dict:
+                if attr_name != "href":
+                    self.errors.append(f"Tag <a> does not support attribute '{attr_name}'.")
+        elif lower_tag == "span":
+            if attrs_dict.get("class") != "tg-spoiler":
+                self.errors.append("Tag <span> must have class=\"tg-spoiler\".")
+            for attr_name in attrs_dict:
+                if attr_name != "class":
+                    self.errors.append(f"Tag <span> does not support attribute '{attr_name}'.")
+        elif lower_tag == "tg-emoji":
+            if "emoji-id" not in attrs_dict or not attrs_dict["emoji-id"].strip():
+                self.errors.append("Tag <tg-emoji> requires a non-empty 'emoji-id' attribute.")
+            for attr_name in attrs_dict:
+                if attr_name != "emoji-id":
+                    self.errors.append(f"Tag <tg-emoji> does not support attribute '{attr_name}'.")
+        elif lower_tag in ("code", "pre"):
+            for attr_name in attrs_dict:
+                if attr_name != "class":
+                    self.errors.append(f"Tag <{tag}> does not support attribute '{attr_name}'.")
+
+        self.stack.append(lower_tag)
+
+    def handle_endtag(self, tag):
+        lower_tag = tag.lower()
+        if lower_tag not in self.ALLOWED_TAGS:
+            self.errors.append(f"Closing tag </{tag}> is not supported by Telegram HTML.")
+            return
+
+        if not self.stack:
+            self.errors.append(f"Unmatched closing tag </{tag}>.")
+            return
+
+        top = self.stack.pop()
+        if top != lower_tag:
+            self.errors.append(f"Mismatched closing tag: expected </{top}>, got </{tag}>.")
+
+        if lower_tag == "pre":
+            self.in_pre = False
+
+
+def validate_telegram_html(text: str) -> tuple[bool, str]:
+    """
+    Validate that text contains only Telegram-supported HTML tags,
+    valid attributes, and balanced nesting.
+    Returns (is_valid, error_message).
+    """
+    if not text or not text.strip():
+        return False, "Message cannot be empty."
+
+    # Temporarily substitute valid {first_name} placeholder before parsing
+    test_text = text.replace("{first_name}", "User")
+    validator = TelegramHTMLValidator()
+    try:
+        validator.feed(test_text)
+        validator.close()
+    except Exception as e:
+        return False, f"Malformed HTML: {e}"
+
+    if validator.errors:
+        return False, "; ".join(validator.errors)
+
+    if validator.stack:
+        unclosed = ", ".join(f"<{t}>" for t in reversed(validator.stack))
+        return False, f"Unclosed HTML tags: {unclosed}"
+
+    return True, ""
 
 
 class TelegramConfigurationLock:
@@ -1203,3 +1324,75 @@ class SettingService:
         finally:
             if own_session:
                 await sess.close()
+
+    @classmethod
+    async def get_welcome_message(cls, session: Optional[AsyncSession] = None) -> str:
+        """Get the active welcome message template for /start."""
+        custom_msg = await cls.get_active_setting(SETTING_WELCOME_MSG, session)
+        return custom_msg if custom_msg else DEFAULT_WELCOME_MESSAGE
+
+    @classmethod
+    async def save_welcome_message(
+        cls,
+        message: str,
+        session: Optional[AsyncSession] = None,
+        admin_username: str = "admin",
+    ) -> str:
+        """Validate and save a custom welcome message template for /start."""
+        clean_msg = message.strip()
+        is_valid, err = validate_telegram_html(clean_msg)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid Telegram HTML formatting: {err}",
+            )
+
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            stmt = select(Setting).where(Setting.key == SETTING_WELCOME_MSG, Setting.status == "ACTIVE")
+            res = await sess.execute(stmt)
+            item = res.scalar_one_or_none()
+            if item:
+                item.value = clean_msg
+            else:
+                sess.add(
+                    Setting(
+                        key=SETTING_WELCOME_MSG,
+                        status="ACTIVE",
+                        value=clean_msg,
+                        is_encrypted=False,
+                        description="Custom Telegram Bot Welcome Message Template",
+                    )
+                )
+            await sess.commit()
+            return clean_msg
+        except Exception:
+            await sess.rollback()
+            raise
+        finally:
+            if own_session:
+                await sess.close()
+
+    @classmethod
+    async def reset_welcome_message(
+        cls,
+        session: Optional[AsyncSession] = None,
+        admin_username: str = "admin",
+    ) -> str:
+        """Reset the welcome message to system default."""
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            await sess.execute(
+                delete(Setting).where(Setting.key == SETTING_WELCOME_MSG, Setting.status == "ACTIVE")
+            )
+            await sess.commit()
+            return DEFAULT_WELCOME_MESSAGE
+        except Exception:
+            await sess.rollback()
+            raise
+        finally:
+            if own_session:
+                await sess.close()
+

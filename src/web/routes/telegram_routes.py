@@ -34,6 +34,10 @@ class MigrationRequest(BaseModel):
     target_mode: str
 
 
+class WelcomeMessageRequest(BaseModel):
+    message: str
+
+
 @router.get("/config")
 async def get_telegram_config(
     session: AsyncSession = Depends(get_db),
@@ -54,7 +58,7 @@ async def test_bot_token(
     if not token or not token.strip():
         # Fall back to active setting
         active_config = await SettingService.get_all_active(session)
-        token = active_config.get("telegram_bot_token") or settings.BOT_TOKEN
+        token = active_config.get("telegram_bot_token")
 
     if not token:
         raise HTTPException(status_code=400, detail="Bot token is required to test connectivity.")
@@ -111,7 +115,7 @@ async def test_cache_channel(
     token = req.bot_token
     if not token or not token.strip():
         active_config = await SettingService.get_all_active(session)
-        token = active_config.get("telegram_bot_token") or settings.BOT_TOKEN
+        token = active_config.get("telegram_bot_token")
 
     if not token:
         raise HTTPException(status_code=400, detail="Bot token is required to test cache channel.")
@@ -159,3 +163,42 @@ async def migrate_telegram_mode(
         admin_username=admin.get("sub", "admin"),
         ip_address=ip,
     )
+
+
+@router.get("/welcome-message")
+async def get_welcome_message(
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    """Retrieve the current active /start welcome message template."""
+    msg = await SettingService.get_welcome_message(session)
+    return {"message": msg}
+
+
+@router.post("/welcome-message")
+async def save_welcome_message(
+    req: WelcomeMessageRequest,
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    """Save a validated custom /start welcome message template."""
+    msg = await SettingService.save_welcome_message(
+        message=req.message,
+        session=session,
+        admin_username=admin.get("sub", "admin"),
+    )
+    return {"message": msg, "status": "saved"}
+
+
+@router.post("/welcome-message/reset")
+async def reset_welcome_message(
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    """Reset the /start welcome message template to default."""
+    msg = await SettingService.reset_welcome_message(
+        session=session,
+        admin_username=admin.get("sub", "admin"),
+    )
+    return {"message": msg, "status": "reset"}
+

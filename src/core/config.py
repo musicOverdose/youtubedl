@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = Field(default="redis://redis:6379/0")
 
     # Web Admin
-    WEB_PORT: int = Field(default=8085)
+    WEB_PORT: int = Field(default=8080)
     ADMIN_USERNAME: str = Field(default="admin")
     ADMIN_PASSWORD: Optional[str] = Field(default=None)
     ADMIN_PASSWORD_HASH: Optional[str] = Field(default=None)

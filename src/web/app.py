@@ -32,10 +32,9 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # If ADMIN_PASSWORD is set and no hash, compute default hash
-    if settings.ADMIN_PASSWORD and not settings.ADMIN_PASSWORD_HASH:
-        settings.ADMIN_PASSWORD_HASH = hash_password(settings.ADMIN_PASSWORD)
-        logger.info(f"Initialized admin credentials for '{settings.ADMIN_USERNAME}'")
+    # Initialize or preserve admin credentials in PostgreSQL
+    from src.services.auth_service import AuthService
+    await AuthService.init_admin_credentials()
 
     # Startup state reconciliation (authoritative ACTIVE DB -> runtime files & READY gating)
     from src.services.setting_service import SettingService

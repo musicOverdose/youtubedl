@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -10,9 +11,32 @@ _bot: Optional[Bot] = None
 _dp: Optional[Dispatcher] = None
 
 
+def reset_bot() -> None:
+    """Reset the cached bot instance (e.g. after configuration reload)."""
+    global _bot
+    _bot = None
+
+
 def get_bot() -> Bot:
+    """
+    Get or initialize the aiogram Bot instance.
+    Reads token strictly from /config/runtime/bot-token.
+    Zero fallback to .env credentials or direct database decryption.
+    """
     global _bot
     if _bot is None:
+        token_path = Path(settings.RUNTIME_BOT_TOKEN_FILE)
+        if not token_path.is_file():
+            raise RuntimeError(
+                f"Bot token not available: {settings.RUNTIME_BOT_TOKEN_FILE} does not exist. "
+                "Telegram credentials must be configured via Admin Panel."
+            )
+        token = token_path.read_text(encoding="utf-8").strip()
+        if not token:
+            raise RuntimeError(
+                f"Bot token in {settings.RUNTIME_BOT_TOKEN_FILE} is empty."
+            )
+
         if (
             settings.TELEGRAM_API_BASE_URL
             and settings.TELEGRAM_API_BASE_URL.rstrip("/") != "https://api.telegram.org"
@@ -21,13 +45,13 @@ def get_bot() -> Bot:
                 api=TelegramAPIServer.from_base(settings.TELEGRAM_API_BASE_URL)
             )
             _bot = Bot(
-                token=settings.BOT_TOKEN,
+                token=token,
                 session=session,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
             )
         else:
             _bot = Bot(
-                token=settings.BOT_TOKEN,
+                token=token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
             )
     return _bot

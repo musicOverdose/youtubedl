@@ -330,6 +330,7 @@
               <div class="form-group">
                 <label>Telegram API ID (numeric, from my.telegram.org):</label>
                 <input type="number" id="tg-api-id" placeholder="12345678">
+                <small style="color:var(--text-secondary);">Current Active ID: <span id="tg-id-display">Not Set</span></small>
               </div>
 
               <div class="form-group">
@@ -396,6 +397,25 @@
                 <button class="btn btn-warning" onclick="openMigrationModal('local')">Migrate to Local Bot API</button>
                 <button class="btn btn-secondary" onclick="openMigrationModal('cloud')">Migrate to Cloud Bot API</button>
               </div>
+            </div>
+          </div>
+
+          <!-- Welcome Message Card -->
+          <div class="card" style="grid-column: 1 / -1; margin-top: 20px;">
+            <h3 style="margin-bottom:15px;">Telegram /start Welcome Message</h3>
+            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">
+              Customize the welcome message sent when users send <code>/start</code> to the bot.
+              Supports Telegram HTML formatting (<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, <code>&lt;a href="..."&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;u&gt;</code>, <code>&lt;spoiler&gt;</code>).
+              Use placeholder <code>{first_name}</code> to interpolate the user's Telegram display name.
+            </p>
+            <div id="tg-welcome-alert" style="display:none; padding:10px 14px; border-radius:var(--radius); margin-bottom:15px; font-size:0.9rem;"></div>
+            <div class="form-group">
+              <label>Welcome Message Template (HTML):</label>
+              <textarea id="tg-welcome-msg-area" style="min-height:140px; font-family:inherit; line-height:1.4; width:100%;" placeholder="Enter welcome message template..."></textarea>
+            </div>
+            <div style="display:flex; gap:10px;">
+              <button class="btn btn-primary" id="btn-save-welcome" onclick="saveWelcomeMessage()">Save Welcome Message</button>
+              <button class="btn btn-secondary" id="btn-reset-welcome" onclick="resetWelcomeMessage()">Reset to Default</button>
             </div>
           </div>
         </div>

@@ -39,3 +39,83 @@ def test_secret_redaction():
     assert "123456789:ABC" not in redacted
     assert "MySecretPassword!" not in redacted
     assert "[REDACTED]" in redacted
+
+
+@pytest.mark.asyncio
+async def test_fresh_install_no_credentials_fails(monkeypatch):
+    from src.core.config import settings
+    from src.services.auth_service import AuthService
+
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", None)
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", None)
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("ADMIN_PASSWORD_HASH", raising=False)
+
+    with pytest.raises(RuntimeError) as exc:
+        await AuthService.init_admin_credentials()
+    assert "Fresh installation requires an initial administrator credential" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_fresh_install_with_password_and_auth(monkeypatch):
+    from src.core.config import settings
+    from src.services.auth_service import AuthService
+
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "superadmin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "InitPassword123!")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", None)
+    monkeypatch.delenv("ADMIN_PASSWORD_RESET", raising=False)
+
+    await AuthService.init_admin_credentials()
+
+    # Verify authentication succeeds with the initialized credentials
+    assert await AuthService.authenticate_admin("superadmin", "InitPassword123!") is True
+    # Verify wrong password / wrong username fail
+    assert await AuthService.authenticate_admin("superadmin", "WrongPass") is False
+    assert await AuthService.authenticate_admin("otheruser", "InitPassword123!") is False
+
+
+@pytest.mark.asyncio
+async def test_db_credentials_authoritative_over_env(monkeypatch):
+    from src.core.config import settings
+    from src.services.auth_service import AuthService
+
+    # 1. Bootstrap initial credentials
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "OriginalPass123!")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", None)
+    monkeypatch.delenv("ADMIN_PASSWORD_RESET", raising=False)
+
+    await AuthService.init_admin_credentials()
+    assert await AuthService.authenticate_admin("admin", "OriginalPass123!") is True
+
+    # 2. Change environment password WITHOUT ADMIN_PASSWORD_RESET=true
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "NewEnvPassword456!")
+    await AuthService.init_admin_credentials()
+
+    # DB remains authoritative
+    assert await AuthService.authenticate_admin("admin", "OriginalPass123!") is True
+    assert await AuthService.authenticate_admin("admin", "NewEnvPassword456!") is False
+
+
+@pytest.mark.asyncio
+async def test_admin_password_reset_flag(monkeypatch):
+    from src.core.config import settings
+    from src.services.auth_service import AuthService
+
+    # 1. Bootstrap initial
+    monkeypatch.setattr(settings, "ADMIN_USERNAME", "admin")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "OldPass123!")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", None)
+    monkeypatch.delenv("ADMIN_PASSWORD_RESET", raising=False)
+    await AuthService.init_admin_credentials()
+
+    # 2. Reset with ADMIN_PASSWORD_RESET=true
+    monkeypatch.setenv("ADMIN_PASSWORD_RESET", "true")
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", "ResetPass789!")
+    await AuthService.init_admin_credentials()
+
+    # Old password fails, new reset password succeeds
+    assert await AuthService.authenticate_admin("admin", "OldPass123!") is False
+    assert await AuthService.authenticate_admin("admin", "ResetPass789!") is True
+
