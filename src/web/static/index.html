@@ -864,6 +864,11 @@
               <input type="text" id="ai-model" value="gpt-4o-mini">
             </div>
             <div class="form-group">
+              <label for="ai-max-chunks">Max Translation Chunks:</label>
+              <input type="number" id="ai-max-chunks" min="0" max="1000" value="20">
+              <div class="field-hint">Limit subtitle size (25 segments/chunk, ~1 min/chunk). E.g., 20 chunks ≈ 20 min video. Set to 0 for unlimited.</div>
+            </div>
+            <div class="form-group">
               <label for="ai-api-key-input">API Key (leave empty to keep existing):</label>
               <input type="password" id="ai-api-key-input" placeholder="sk-…" autocomplete="off">
               <div class="field-hint">Currently configured: <span id="ai-api-key-display">None</span></div>

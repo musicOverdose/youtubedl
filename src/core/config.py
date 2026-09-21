@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     AI_API_KEY: Optional[str] = Field(default=None)
     AI_BASE_URL: str = Field(default="https://api.openai.com/v1")
     AI_MODEL: str = Field(default="gpt-4o-mini")
+    AI_MAX_CHUNKS: int = Field(default=20)
+    AI_CHUNK_SIZE: int = Field(default=25)
 
     # yt-dlp & Network
     YTDLP_PROXY: Optional[str] = Field(default=None)

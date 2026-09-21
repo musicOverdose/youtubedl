@@ -506,6 +506,8 @@ async function loadAI() {
     document.getElementById('ai-provider').value         = data.provider;
     document.getElementById('ai-base-url').value         = data.base_url;
     document.getElementById('ai-model').value            = data.model;
+    const maxChunksEl = document.getElementById('ai-max-chunks');
+    if (maxChunksEl) maxChunksEl.value                   = data.max_chunks ?? 20;
     const aiKeyInput = document.getElementById('ai-api-key-input');
     const aiKeyDisplay = document.getElementById('ai-api-key-display');
     if (data.api_key_masked) {
@@ -525,10 +527,12 @@ async function saveAISettings(e) {
   const provider = document.getElementById('ai-provider').value;
   const baseUrl  = document.getElementById('ai-base-url').value;
   const model    = document.getElementById('ai-model').value;
+  const maxChunksEl = document.getElementById('ai-max-chunks');
+  const maxChunks = maxChunksEl ? (parseInt(maxChunksEl.value, 10) || 0) : 20;
   const key      = document.getElementById('ai-api-key-input').value;
 
   try {
-    await API.post('/api/ai', { enabled, provider, base_url: baseUrl, model, api_key: key || null });
+    await API.post('/api/ai', { enabled, provider, base_url: baseUrl, model, max_chunks: maxChunks, api_key: key || null });
     showAlert('ai-alert', 'AI translation settings saved and persisted to PostgreSQL', 'success');
     toastSuccess('AI settings saved and applied', 'AI Settings');
     document.getElementById('ai-api-key-input').value = '';

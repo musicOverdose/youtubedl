@@ -304,21 +304,25 @@ class JobProcessor:
                         "format": YtDlpService.build_video_format_spec(target_height),
                     })
 
+                    loop = asyncio.get_running_loop()
+
                     def progress_hook(d):
-                        if d.get("status") == "downloading":
-                            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 1
-                            downloaded = d.get("downloaded_bytes", 0)
-                            pct = (downloaded / total) * 100
-                            speed = d.get("_speed_str", "")
-                            eta = d.get("_eta_str", "")
-                            asyncio.run_coroutine_threadsafe(
-                                notifier.update("⬇️", "Downloading", f"Progress: {pct:.1f}% | Speed: {speed} | ETA: {eta}"),
-                                asyncio.get_event_loop(),
-                            )
+                        try:
+                            if d.get("status") == "downloading":
+                                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 1
+                                downloaded = d.get("downloaded_bytes", 0)
+                                pct = (downloaded / total) * 100
+                                speed = d.get("_speed_str", "")
+                                eta = d.get("_eta_str", "")
+                                asyncio.run_coroutine_threadsafe(
+                                    notifier.update("⬇️", "Downloading", f"Progress: {pct:.1f}% | Speed: {speed} | ETA: {eta}"),
+                                    loop,
+                                )
+                        except Exception as pe:
+                            logger.debug("Progress hook update error: %s", pe)
 
                     ydl_opts["progress_hooks"] = [progress_hook]
 
-                    loop = asyncio.get_running_loop()
                     def _dl():
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             ydl.download([job.canonical_url])
@@ -432,6 +436,24 @@ class JobProcessor:
                     })
 
                     loop = asyncio.get_running_loop()
+
+                    def progress_hook_audio(d):
+                        try:
+                            if d.get("status") == "downloading":
+                                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 1
+                                downloaded = d.get("downloaded_bytes", 0)
+                                pct = (downloaded / total) * 100
+                                speed = d.get("_speed_str", "")
+                                eta = d.get("_eta_str", "")
+                                asyncio.run_coroutine_threadsafe(
+                                    notifier.update("⬇️", "Downloading", f"Progress: {pct:.1f}% | Speed: {speed} | ETA: {eta}"),
+                                    loop,
+                                )
+                        except Exception as pe:
+                            logger.debug("Audio progress hook error: %s", pe)
+
+                    ydl_opts["progress_hooks"] = [progress_hook_audio]
+
                     def _dl_audio():
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             ydl.download([job.canonical_url])
@@ -526,15 +548,24 @@ class JobProcessor:
                     target_lang = job.subtitle_lang or "EN"
 
                     if target_lang == "FA":
-                        job.status = JobStatus.PROCESSING.value
-                        await session.commit()
-                        await notifier.update("⚙️", "Translating", "Translating subtitles to Persian with AI...", force=True)
-
-                        # Sync non-secret runtime settings (e.g. AI provider, model, base url) without decrypting secrets
+                        # Sync non-secret runtime settings (e.g. AI provider, model, base url, max chunks) without decrypting secrets
                         try:
                             await SettingService.load_public_settings_to_runtime(session)
                         except Exception as s_err:
                             logger.warning("Could not sync public settings before translation: %s", s_err)
+
+                        # Check chunk limit before starting AI translation
+                        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 25)
+                        total_chunks = (len(parsed_segs) + chunk_size - 1) // chunk_size
+                        max_chunks = getattr(settings, "AI_MAX_CHUNKS", 20)
+                        if max_chunks and max_chunks > 0 and total_chunks > max_chunks:
+                            raise RuntimeError(
+                                f"Video subtitle size is too large for AI translation ({total_chunks} chunks exceeds maximum allowed {max_chunks} chunks). Please download English subtitles instead."
+                            )
+
+                        job.status = JobStatus.PROCESSING.value
+                        await session.commit()
+                        await notifier.update("⚙️", "Translating", f"Translating subtitles to Persian with AI ({total_chunks} chunks)...", force=True)
 
                         ok, persian_srt, ai_err = await AIService.translate_english_to_persian(english_srt)
                         if not ok or not persian_srt:
@@ -640,7 +671,11 @@ class JobProcessor:
                 job.error_code = "PROCESSING_ERROR"
                 job.error_message = str(e)[:500]
                 await session.commit()
-                await notifier.update("❌", "Failed", f"Error: {str(e)[:120]}", force=True)
+                err_str = str(e)
+                if "too large for AI translation" in err_str:
+                    await notifier.update("⚠️", "Subtitle Too Large", err_str, force=True)
+                else:
+                    await notifier.update("❌", "Failed", f"Error: {err_str[:300]}", force=True)
 
             finally:
                 if own_bot and bot is not None:

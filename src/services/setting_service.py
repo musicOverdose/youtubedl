@@ -68,6 +68,8 @@ SETTING_AI_PROVIDER = "ai_provider"
 SETTING_AI_BASE_URL = "ai_base_url"
 SETTING_AI_MODEL = "ai_model"
 SETTING_AI_API_KEY = "ai_api_key"
+SETTING_AI_MAX_CHUNKS = "ai_max_chunks"
+SETTING_AI_CHUNK_SIZE = "ai_chunk_size"
 
 # Additional Audited Runtime Setting Keys
 SETTING_YTDLP_COOKIES_ENABLED = "ytdlp_cookies_enabled"
@@ -92,6 +94,8 @@ APP_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
     SETTING_AI_BASE_URL: {"attr": "AI_BASE_URL", "type": str, "encrypted": False, "desc": "AI subtitle translation API base URL"},
     SETTING_AI_MODEL: {"attr": "AI_MODEL", "type": str, "encrypted": False, "desc": "AI subtitle translation model name"},
     SETTING_AI_API_KEY: {"attr": "AI_API_KEY", "type": str, "encrypted": True, "desc": "AI subtitle translation API key (encrypted)"},
+    SETTING_AI_MAX_CHUNKS: {"attr": "AI_MAX_CHUNKS", "type": int, "encrypted": False, "desc": "Max chunks for AI subtitle translation"},
+    SETTING_AI_CHUNK_SIZE: {"attr": "AI_CHUNK_SIZE", "type": int, "encrypted": False, "desc": "Subtitle segment chunk size for AI translation"},
     SETTING_YTDLP_COOKIES_ENABLED: {"attr": "YTDLP_COOKIES_ENABLED", "type": bool, "encrypted": False, "desc": "YouTube cookies enabled"},
     SETTING_MUST_JOIN_ENABLED: {"attr": "MUST_JOIN_ENABLED", "type": bool, "encrypted": False, "desc": "Must-join channels enforcement enabled"},
     SETTING_MAX_ACTIVE_JOBS: {"attr": "MAX_ACTIVE_JOBS", "type": int, "encrypted": False, "desc": "Max active worker processing jobs"},
@@ -1687,6 +1691,9 @@ class SettingService:
         provider = str(all_active.get(SETTING_AI_PROVIDER, settings.AI_PROVIDER))
         base_url = str(all_active.get(SETTING_AI_BASE_URL, settings.AI_BASE_URL))
         model = str(all_active.get(SETTING_AI_MODEL, settings.AI_MODEL))
+        max_chunks = _cast_setting_value(
+            all_active.get(SETTING_AI_MAX_CHUNKS, getattr(settings, "AI_MAX_CHUNKS", 20)), int
+        )
         api_key = all_active.get(SETTING_AI_API_KEY, settings.AI_API_KEY) or ""
 
         masked_key = ""
@@ -1698,6 +1705,7 @@ class SettingService:
             "provider": provider,
             "base_url": base_url,
             "model": model,
+            "max_chunks": max_chunks,
             "api_key_masked": masked_key,
             "is_configured": AIService.is_configured(),
         }
@@ -1717,6 +1725,7 @@ class SettingService:
             provider = str(req.get("provider", "openai")).strip()
             base_url = str(req.get("base_url", "https://api.openai.com/v1")).rstrip("/")
             model = str(req.get("model", "gpt-4o-mini")).strip()
+            max_chunks = int(req.get("max_chunks", getattr(settings, "AI_MAX_CHUNKS", 20)))
             api_key = req.get("api_key")
 
             # Update in-memory
@@ -1724,6 +1733,7 @@ class SettingService:
             settings.AI_PROVIDER = provider
             settings.AI_BASE_URL = base_url
             settings.AI_MODEL = model
+            settings.AI_MAX_CHUNKS = max_chunks
 
             async def _upsert(k: str, v: str, desc: str):
                 s_stmt = select(Setting).where(Setting.key == k, Setting.status == "ACTIVE")
@@ -1739,6 +1749,7 @@ class SettingService:
             await _upsert(SETTING_AI_PROVIDER, provider, "AI Translation Provider")
             await _upsert(SETTING_AI_BASE_URL, base_url, "AI Translation Base URL")
             await _upsert(SETTING_AI_MODEL, model, "AI Translation Model")
+            await _upsert(SETTING_AI_MAX_CHUNKS, str(max_chunks), "AI Translation Max Chunks")
 
             if api_key and str(api_key).strip():
                 clean_key = str(api_key).strip()

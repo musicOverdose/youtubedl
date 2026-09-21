@@ -167,6 +167,7 @@ async def test_ai_settings_persistence_and_encryption(db_session):
             "provider": "openai",
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4o-mini",
+            "max_chunks": 35,
             "api_key": "sk-proj-supersecretkey1234567890",
         }
         res_post = await client.post("/api/ai", json=ai_payload)
@@ -180,6 +181,7 @@ async def test_ai_settings_persistence_and_encryption(db_session):
         assert data["enabled"] is True
         assert data["provider"] == "openai"
         assert data["model"] == "gpt-4o-mini"
+        assert data["max_chunks"] == 35
         assert data["api_key_masked"] != ""
         assert "supersecretkey" not in data["api_key_masked"]  # Must be masked
 
@@ -200,11 +202,13 @@ async def test_ai_settings_persistence_and_encryption(db_session):
         # Simulate restart: reset in-memory settings
         settings.AI_ENABLED = False
         settings.AI_MODEL = "default-model"
+        settings.AI_MAX_CHUNKS = 10
         settings.AI_API_KEY = ""
 
         await SettingService.load_all_settings_to_runtime()
         assert settings.AI_ENABLED is True
         assert settings.AI_MODEL == "gpt-4o-mini"
+        assert settings.AI_MAX_CHUNKS == 35
         assert settings.AI_API_KEY == "sk-proj-supersecretkey1234567890"
 
 

@@ -256,7 +256,7 @@ async def main() -> None:
                 backoff_delay = min(backoff_delay * 2, 30.0)
                 continue
 
-            polling_start_time = asyncio.get_event_loop().time()
+            polling_start_time = asyncio.get_running_loop().time()
             polling_task = asyncio.create_task(
                 dp.start_polling(bot, allowed_updates=["message", "callback_query"])
             )
@@ -301,7 +301,7 @@ async def main() -> None:
                 except (asyncio.CancelledError, Exception):
                     pass
 
-            if asyncio.get_event_loop().time() - polling_start_time > 30.0:
+            if asyncio.get_running_loop().time() - polling_start_time > 30.0:
                 backoff_delay = 1.0
 
             await bot.session.close()

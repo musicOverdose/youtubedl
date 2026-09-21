@@ -121,7 +121,7 @@ class AIService:
 
     @classmethod
     async def translate_english_to_persian(
-        cls, english_srt_content: str
+        cls, english_srt_content: str, max_chunks: Optional[int] = None
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Translates English SRT subtitles to Persian using OpenAI-compatible API.
@@ -139,9 +139,24 @@ class AIService:
         if not segments:
             return False, None, "English subtitle content is empty or invalid"
 
-        # Chunk segments to prevent timeout/context window overflow (25 segments per prompt)
-        chunk_size = 25
+        # Chunk segments to prevent timeout/context window overflow
+        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 25)
         translated_segments: List[SubtitleSegment] = []
+
+        total_chunks = (len(segments) + chunk_size - 1) // chunk_size
+        effective_max_chunks = max_chunks if max_chunks is not None else getattr(settings, "AI_MAX_CHUNKS", 20)
+
+        if effective_max_chunks and effective_max_chunks > 0 and total_chunks > effective_max_chunks:
+            logger.warning(
+                "Subtitle translation rejected: %d chunks exceeds max allowed %d chunks",
+                total_chunks,
+                effective_max_chunks,
+            )
+            return (
+                False,
+                None,
+                f"Video subtitle size is too large for AI translation ({total_chunks} chunks exceeds maximum allowed {effective_max_chunks} chunks). Please download English subtitles instead.",
+            )
 
         system_prompt = (
             "You are a professional subtitle translator. Your task is to translate English subtitles into natural, idiomatic Persian (Farsi).\n"
@@ -151,13 +166,27 @@ class AIService:
             "3. Output MUST be strictly valid SRT format and nothing else. No markdown fences, no explanations.\n"
         )
 
-        total_chunks = (len(segments) + chunk_size - 1) // chunk_size
         logger.info(
-            "Starting Persian subtitle translation: %d segments across %d chunks (chunk_size=%d)",
+            "Starting Persian subtitle translation: %d segments across %d chunks (chunk_size=%d, max_chunks=%s)",
             len(segments),
             total_chunks,
             chunk_size,
+            effective_max_chunks,
         )
+
+        # Normalize Base URL to prevent duplicate /chat/completions
+        raw_base = (settings.AI_BASE_URL or "https://api.openai.com/v1").strip().rstrip("/")
+        if raw_base.endswith("/chat/completions"):
+            url = raw_base
+        else:
+            url = f"{raw_base}/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {api_key.strip()}",
+            "Content-Type": "application/json",
+            "User-Agent": "YtDlpBot/1.0",
+        }
+        model_name = (settings.AI_MODEL or "gpt-4o-mini").strip()
 
         for chunk_idx, i in enumerate(range(0, len(segments), chunk_size), 1):
             chunk = segments[i : i + chunk_size]
@@ -165,12 +194,8 @@ class AIService:
 
             user_prompt = f"Translate these SRT subtitles to Persian. Keep all timestamps and numbers intact:\n\n{chunk_srt}"
 
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
             payload = {
-                "model": settings.AI_MODEL,
+                "model": model_name,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -178,18 +203,26 @@ class AIService:
                 "temperature": 0.3,
             }
 
-            url = f"{settings.AI_BASE_URL.rstrip('/')}/chat/completions"
-
             # Execute API call with retries and exponential backoff
             success = False
             response_text = ""
+            last_error = ""
             for attempt in range(3):
                 try:
-                    async with httpx.AsyncClient(timeout=60.0) as client:
+                    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                         resp = await client.post(url, headers=headers, json=payload)
                         if resp.status_code == 200:
                             data = resp.json()
-                            response_text = data["choices"][0]["message"]["content"].strip()
+                            choices = data.get("choices") or []
+                            if not choices:
+                                last_error = f"API returned 200 but choices array is empty: {data}"
+                                logger.error("AI API returned 200 with empty choices on chunk %d/%d: %s", chunk_idx, total_chunks, data)
+                                continue
+                            response_text = choices[0].get("message", {}).get("content", "").strip()
+                            if not response_text:
+                                last_error = "API returned empty message content"
+                                logger.warning("AI API returned empty message content on chunk %d/%d", chunk_idx, total_chunks)
+                                continue
                             # Clean possible markdown fences
                             if response_text.startswith("```"):
                                 response_text = re.sub(r"^```[a-zA-Z]*\n", "", response_text)
@@ -203,15 +236,18 @@ class AIService:
                             )
                             break
                         else:
+                            err_body = resp.text.strip()[:300]
+                            last_error = f"HTTP {resp.status_code}: {err_body}"
                             logger.error(
                                 "AI API responded with %s: %s (chunk %d/%d, attempt %d/3)",
                                 resp.status_code,
-                                resp.text,
+                                err_body,
                                 chunk_idx,
                                 total_chunks,
                                 attempt + 1,
                             )
                 except Exception as e:
+                    last_error = f"{type(e).__name__}: {str(e)[:300]}"
                     logger.error(
                         "AI translation request failed with %s: %s (chunk %d/%d, attempt %d/3)",
                         type(e).__name__,
@@ -224,7 +260,10 @@ class AIService:
                     await asyncio.sleep(2 ** attempt)
 
             if not success or not response_text:
-                return False, None, f"AI translation provider request failed on chunk {chunk_idx}/{total_chunks}"
+                err_msg = f"AI translation provider request failed on chunk {chunk_idx}/{total_chunks}"
+                if last_error:
+                    err_msg += f" ({last_error})"
+                return False, None, err_msg
 
             # Parse translated chunk
             parsed_chunk = cls.parse_srt(response_text)

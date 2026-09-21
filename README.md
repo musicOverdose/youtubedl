@@ -357,6 +357,7 @@ Access the dashboard at `http://<your-server-ip>:8087`.
 | `AI_PROVIDER` | `openai` | AI translation provider |
 | `AI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
 | `AI_MODEL` | `gpt-4o-mini` | Model for subtitle translation |
+| `AI_MAX_CHUNKS` | `20` | Max chunks for subtitle translation (0 = unlimited) |
 
 ---
 

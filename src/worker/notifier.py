@@ -1,4 +1,5 @@
 import asyncio
+import html
 import time
 from typing import Dict, List, Optional
 from aiogram import Bot
@@ -33,7 +34,7 @@ class StatusNotifier:
 
         text = f"{stage_icon} <b>{stage_name}</b>\n"
         if detail:
-            text += f"{detail}\n"
+            text += f"{html.escape(detail)}\n"
 
         for req in self.requests:
             chat_id = req.get("chat_id")
