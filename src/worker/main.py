@@ -37,6 +37,38 @@ async def worker_loop():
     async with AsyncSessionLocal() as session:
         await WorkerRecovery.perform_startup_recovery(session)
 
+    # Load persistent application settings from PostgreSQL
+    from src.services.setting_service import SettingService
+    try:
+        await SettingService.load_all_settings_to_runtime()
+    except Exception as e:
+        logger.warning("Could not load application settings from DB in worker: %s", e)
+
+    # Listen for runtime config reloads via Redis
+    async def listen_for_setting_reloads():
+        from src.core.redis import get_redis_client
+        while running:
+            try:
+                r = get_redis_client()
+                pubsub = r.pubsub()
+                await pubsub.subscribe("app:config:reload")
+                async for message in pubsub.listen():
+                    if not running:
+                        break
+                    if message and message.get("type") == "message":
+                        try:
+                            await SettingService.load_all_settings_to_runtime()
+                            logger.info("Worker reloaded application settings from PostgreSQL.")
+                        except Exception as e:
+                            logger.warning("Worker failed to reload application settings: %s", e)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Worker settings reload pubsub error: %s", e)
+                await asyncio.sleep(3.0)
+
+    setting_reload_task = asyncio.create_task(listen_for_setting_reloads())
+
     # Launch telemetry task
     telemetry_task = asyncio.create_task(periodic_telemetry(processor))
 
@@ -70,6 +102,7 @@ async def worker_loop():
                 await asyncio.sleep(2.0)
     finally:
         telemetry_task.cancel()
+        setting_reload_task.cancel()
 
     logger.info("Worker consumer loop finished.")
 

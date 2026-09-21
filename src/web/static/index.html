@@ -507,6 +507,7 @@
           <div class="card__header">
             <div class="card__title">Customizable Must-Join Template</div>
           </div>
+          <div class="alert-strip hidden mb-3" id="must-join-alert" role="alert"></div>
           <p class="font-sm text-secondary mb-3">
             Dynamic placeholders: <code>{first_name}</code> for subscriber's name, <code>{channel_list}</code> for list of missing channels.
           </p>
@@ -723,6 +724,7 @@
         </div>
 
         <div class="card max-w-md">
+          <div class="alert-strip hidden mb-4" id="youtube-alert" role="alert"></div>
           <div class="form-group">
             <label for="yt-max-height">Default Maximum Source Resolution:</label>
             <select id="yt-max-height">
@@ -813,6 +815,7 @@
             <div class="card__header">
               <div class="card__title">Paste cookies.txt Content</div>
             </div>
+            <div class="alert-strip hidden mb-3" id="cookies-alert" role="alert"></div>
             <form onsubmit="pasteCookiesSubmit(event)">
               <div class="form-group">
                 <label for="cookie-paste-area">Netscape cookie file content:</label>
@@ -839,6 +842,7 @@
         </div>
 
         <div class="card max-w-md">
+          <div class="alert-strip hidden mb-4" id="ai-alert" role="alert"></div>
           <form onsubmit="saveAISettings(event)">
             <div class="form-group">
               <label class="inline">
@@ -886,6 +890,7 @@
         </div>
 
         <div class="card max-w-md">
+          <div class="alert-strip hidden mb-4" id="settings-alert" role="alert"></div>
           <form onsubmit="saveGlobalSettings(event)">
             <div class="form-group">
               <label for="set-max-dur">Maximum Video Duration (seconds):</label>
@@ -1065,6 +1070,7 @@
       </button>
     </div>
     <div class="modal-body">
+      <div class="alert-strip alert-strip--danger hidden mb-3" id="add-channel-alert" role="alert"></div>
       <form onsubmit="addChannelModalSubmit(event)" id="form-add-channel">
         <div class="form-group">
           <label for="mj-title">Channel Title:</label>

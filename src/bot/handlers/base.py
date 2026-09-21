@@ -41,13 +41,30 @@ async def get_or_create_user(session: AsyncSession, msg_user) -> User:
 
 @base_router.message(CommandStart())
 async def cmd_start(message: Message):
-    async with AsyncSessionLocal() as session:
-        if message.from_user:
-            await get_or_create_user(session, message.from_user)
-        template = await SettingService.get_welcome_message(session)
-
     raw_name = message.from_user.first_name if (message.from_user and message.from_user.first_name) else "User"
     safe_name = html.escape(raw_name)
+    template = DEFAULT_WELCOME_MESSAGE
+
+    try:
+        async with AsyncSessionLocal() as session:
+            if message.from_user:
+                try:
+                    await get_or_create_user(session, message.from_user)
+                except Exception as e:
+                    logger.warning(
+                        "Auxiliary user persistence in /start failed: %s. Proceeding with welcome message.", e
+                    )
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
+            try:
+                template = await SettingService.get_welcome_message(session)
+            except Exception as e:
+                logger.warning("Failed to load welcome message from DB: %s. Using default template.", e)
+    except Exception as e:
+        logger.error("Database session error in /start: %s. Using default welcome template.", e)
+
     welcome_text = template.replace("{first_name}", safe_name)
 
     try:
@@ -55,7 +72,9 @@ async def cmd_start(message: Message):
     except TelegramBadRequest as e:
         err_msg = str(e).lower()
         if "can't parse entities" in err_msg or "entity" in err_msg:
-            logger.warning("Failed to render custom welcome message due to HTML entity error: %s. Falling back to default.", e)
+            logger.warning(
+                "Failed to render custom welcome message due to HTML entity error: %s. Falling back to default.", e
+            )
             fallback_text = DEFAULT_WELCOME_MESSAGE.replace("{first_name}", safe_name)
             await message.answer(fallback_text, parse_mode=ParseMode.HTML)
         else:

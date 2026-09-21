@@ -13,14 +13,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const u = document.getElementById('login-username').value;
     const p = document.getElementById('login-password').value;
     const errBox = document.getElementById('login-error');
-    errBox.classList.add('hidden');
+    hideAlert('login-error');
     try {
       await API.post('/api/auth/login', { username: u, password: p });
       document.getElementById('login-modal').classList.remove('active');
       loadSection(activeSection);
     } catch (err) {
-      errBox.textContent = err.message || 'Login failed';
-      errBox.classList.remove('hidden');
+      showAlert('login-error', err.message || 'Login failed', 'error');
     }
   });
 });
@@ -28,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function initNavigation() {
   document.querySelectorAll('.nav-item').forEach((item) => {
     item.addEventListener('click', () => {
+      clearAllAlerts();
       document.querySelectorAll('.nav-item').forEach((n) => {
         n.classList.remove('active');
         n.removeAttribute('aria-current');
@@ -360,6 +360,7 @@ async function toggleMustJoin() {
 
 async function addChannelModalSubmit(e) {
   e.preventDefault();
+  hideAlert('add-channel-alert');
   const cid     = parseInt(document.getElementById('mj-chat-id').value, 10);
   const title   = document.getElementById('mj-title').value;
   const username = document.getElementById('mj-username').value;
@@ -378,6 +379,7 @@ async function addChannelModalSubmit(e) {
     loadMustJoin();
     toastSuccess(`Channel "${title}" added successfully`);
   } catch (err) {
+    showAlert('add-channel-alert', err.message, 'error');
     toastError(err.message, 'Add Channel Failed');
   }
 }
@@ -442,13 +444,16 @@ async function toggleCookies() {
 
 async function pasteCookiesSubmit(e) {
   e.preventDefault();
+  hideAlert('cookies-alert');
   const text = document.getElementById('cookie-paste-area').value;
   try {
     const res = await API.post('/api/cookies/paste', { content: text });
+    showAlert('cookies-alert', `Saved and validated ${res.cookie_count} cookies`, 'success');
     toastSuccess(`Saved and validated ${res.cookie_count} cookies`, 'Cookies Saved');
     document.getElementById('cookie-paste-area').value = '';
     loadCookies();
   } catch (err) {
+    showAlert('cookies-alert', err.message, 'error');
     toastError(err.message, 'Cookie Validation Failed');
   }
 }
@@ -487,6 +492,7 @@ async function loadAI() {
 
 async function saveAISettings(e) {
   e.preventDefault();
+  hideAlert('ai-alert');
   const enabled = document.getElementById('ai-enabled-toggle').checked;
   const provider = document.getElementById('ai-provider').value;
   const baseUrl  = document.getElementById('ai-base-url').value;
@@ -495,10 +501,12 @@ async function saveAISettings(e) {
 
   try {
     await API.post('/api/ai', { enabled, provider, base_url: baseUrl, model, api_key: key || null });
+    showAlert('ai-alert', 'AI translation settings saved and persisted to PostgreSQL', 'success');
     toastSuccess('AI settings saved and applied', 'AI Settings');
     document.getElementById('ai-api-key-input').value = '';
     loadAI();
   } catch (err) {
+    showAlert('ai-alert', err.message, 'error');
     toastError(err.message, 'AI Settings Error');
   }
 }
@@ -525,6 +533,8 @@ async function loadSettings() {
 
 async function saveGlobalSettings(e) {
   e.preventDefault();
+  hideAlert('settings-alert');
+  hideAlert('youtube-alert');
   const payload = {
     max_video_duration_seconds:        parseInt(document.getElementById('set-max-dur').value, 10),
     allow_unknown_duration:            document.getElementById('set-allow-unknown').checked,
@@ -542,9 +552,13 @@ async function saveGlobalSettings(e) {
 
   try {
     await API.post('/api/settings', payload);
+    showAlert('settings-alert', 'Settings saved and persisted to PostgreSQL', 'success');
+    showAlert('youtube-alert', 'Settings saved and persisted to PostgreSQL', 'success');
     toastSuccess('Settings saved and applied dynamically', 'Settings Saved');
     loadSettings();
   } catch (err) {
+    showAlert('settings-alert', err.message, 'error');
+    showAlert('youtube-alert', err.message, 'error');
     toastError(err.message, 'Settings Error');
   }
 }
@@ -722,6 +736,7 @@ function showTelegramAlert(msg, isSuccess = true) {
 }
 
 async function saveTelegramConfig() {
+  hideAlert('telegram-alert');
   const saveBtn = document.getElementById('btn-save-telegram');
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving…';
@@ -834,23 +849,29 @@ async function executeMigration() {
 }
 
 async function saveMustJoinMessage() {
+  hideAlert('must-join-alert');
   const msg = document.getElementById('mj-custom-msg-area').value;
   try {
     await API.post('/api/must-join/message', { message: msg });
+    showAlert('must-join-alert', 'Custom Must-Join message saved', 'success');
     toastSuccess('Custom Must-Join message saved', 'Saved');
   } catch (err) {
+    showAlert('must-join-alert', `Failed to save: ${err.message}`, 'error');
     toastError(`Failed to save: ${err.message}`, 'Save Error');
   }
 }
 
 async function resetMustJoinMessage() {
+  hideAlert('must-join-alert');
   const confirmed = await showConfirm('Reset Must-Join template message to system default?', 'Reset Message', 'Reset', 'btn-warning');
   if (!confirmed) return;
   try {
     const res = await API.post('/api/must-join/message/reset', {});
     document.getElementById('mj-custom-msg-area').value = res.message;
+    showAlert('must-join-alert', 'Reset to default template', 'success');
     toastSuccess('Reset to default template');
   } catch (err) {
+    showAlert('must-join-alert', `Failed to reset: ${err.message}`, 'error');
     toastError(`Failed to reset: ${err.message}`, 'Reset Error');
   }
 }
@@ -874,6 +895,7 @@ function showWelcomeAlert(msg, isSuccess = true) {
 }
 
 async function saveWelcomeMessage() {
+  hideAlert('tg-welcome-alert');
   const btn  = document.getElementById('btn-save-welcome');
   const area = document.getElementById('tg-welcome-msg-area');
 
@@ -893,6 +915,7 @@ async function saveWelcomeMessage() {
 }
 
 async function resetWelcomeMessage() {
+  hideAlert('tg-welcome-alert');
   const confirmed = await showConfirm('Reset /start welcome message to system default?', 'Reset Welcome Message', 'Reset', 'btn-warning');
   if (!confirmed) return;
 

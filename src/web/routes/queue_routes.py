@@ -91,6 +91,9 @@ async def resume_queue(
     return {"status": "resumed"}
 
 
+from src.services.setting_service import SETTING_MAX_ACTIVE_JOBS, SettingService
+
+
 @router.post("/concurrency")
 async def update_concurrency(
     req: ConcurrencyRequest,
@@ -101,7 +104,9 @@ async def update_concurrency(
         raise HTTPException(status_code=400, detail="Concurrency must be between 1 and 8")
 
     old_val = settings.MAX_ACTIVE_JOBS
-    settings.MAX_ACTIVE_JOBS = req.max_active_jobs
+    await SettingService.save_single_setting(
+        SETTING_MAX_ACTIVE_JOBS, req.max_active_jobs, description="Max Active Processing Jobs", session=session
+    )
 
     await AuditService.log_action(
         session,

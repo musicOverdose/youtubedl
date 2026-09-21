@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import socket
 from datetime import datetime, timezone
@@ -43,6 +44,74 @@ SETTING_CACHE_CHANNEL_ID = "telegram_cache_channel_id"
 SETTING_CONFIG_VERSION = "telegram_config_version"
 SETTING_MUST_JOIN_MSG = "must_join_message"
 SETTING_WELCOME_MSG = "welcome_message"
+
+# Application Setting Keys
+SETTING_MAX_VIDEO_DURATION_SECONDS = "max_video_duration_seconds"
+SETTING_ALLOW_UNKNOWN_DURATION = "allow_unknown_duration"
+SETTING_CACHE_HIT_BYPASSES_DURATION_LIMIT = "cache_hit_bypasses_duration_limit"
+SETTING_MAX_CONCURRENT_PER_USER = "max_concurrent_per_user"
+SETTING_MAX_QUEUED_PER_USER = "max_queued_per_user"
+SETTING_MAX_TEMP_STORAGE_GB = "max_temp_storage_gb"
+SETTING_DEFAULT_MAX_HEIGHT = "default_max_height"
+SETTING_PLAYLISTS_ENABLED = "playlists_enabled"
+SETTING_H264_ENABLED = "h264_enabled"
+SETTING_H265_ENABLED = "h265_enabled"
+SETTING_MP3_ENABLED = "mp3_enabled"
+SETTING_SUBTITLES_ENABLED = "subtitles_enabled"
+
+# AI Setting Keys
+SETTING_AI_ENABLED = "ai_enabled"
+SETTING_AI_PROVIDER = "ai_provider"
+SETTING_AI_BASE_URL = "ai_base_url"
+SETTING_AI_MODEL = "ai_model"
+SETTING_AI_API_KEY = "ai_api_key"
+
+# Additional Audited Runtime Setting Keys
+SETTING_YTDLP_COOKIES_ENABLED = "ytdlp_cookies_enabled"
+SETTING_MUST_JOIN_ENABLED = "must_join_enabled"
+SETTING_MAX_ACTIVE_JOBS = "max_active_jobs"
+
+APP_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
+    SETTING_MAX_VIDEO_DURATION_SECONDS: {"attr": "MAX_VIDEO_DURATION_SECONDS", "type": int, "encrypted": False, "desc": "Max video duration in seconds"},
+    SETTING_ALLOW_UNKNOWN_DURATION: {"attr": "ALLOW_UNKNOWN_DURATION", "type": bool, "encrypted": False, "desc": "Allow unknown video duration"},
+    SETTING_CACHE_HIT_BYPASSES_DURATION_LIMIT: {"attr": "CACHE_HIT_BYPASSES_DURATION_LIMIT", "type": bool, "encrypted": False, "desc": "Cache hit bypasses duration limit"},
+    SETTING_MAX_CONCURRENT_PER_USER: {"attr": "MAX_CONCURRENT_PER_USER", "type": int, "encrypted": False, "desc": "Max concurrent processing jobs per user"},
+    SETTING_MAX_QUEUED_PER_USER: {"attr": "MAX_QUEUED_PER_USER", "type": int, "encrypted": False, "desc": "Max queued jobs per user"},
+    SETTING_MAX_TEMP_STORAGE_GB: {"attr": "MAX_TEMP_STORAGE_GB", "type": int, "encrypted": False, "desc": "Max temporary storage in GB"},
+    SETTING_DEFAULT_MAX_HEIGHT: {"attr": "DEFAULT_MAX_HEIGHT", "type": int, "encrypted": False, "desc": "Default max video height"},
+    SETTING_PLAYLISTS_ENABLED: {"attr": "PLAYLISTS_ENABLED", "type": bool, "encrypted": False, "desc": "Enable YouTube playlists"},
+    SETTING_H264_ENABLED: {"attr": "H264_ENABLED", "type": bool, "encrypted": False, "desc": "H264 codec enabled"},
+    SETTING_H265_ENABLED: {"attr": "H265_ENABLED", "type": bool, "encrypted": False, "desc": "H265 codec enabled"},
+    SETTING_MP3_ENABLED: {"attr": "MP3_ENABLED", "type": bool, "encrypted": False, "desc": "MP3 audio extraction enabled"},
+    SETTING_SUBTITLES_ENABLED: {"attr": "SUBTITLES_ENABLED", "type": bool, "encrypted": False, "desc": "Subtitle extraction enabled"},
+    SETTING_AI_ENABLED: {"attr": "AI_ENABLED", "type": bool, "encrypted": False, "desc": "AI subtitle translation enabled"},
+    SETTING_AI_PROVIDER: {"attr": "AI_PROVIDER", "type": str, "encrypted": False, "desc": "AI subtitle translation provider"},
+    SETTING_AI_BASE_URL: {"attr": "AI_BASE_URL", "type": str, "encrypted": False, "desc": "AI subtitle translation API base URL"},
+    SETTING_AI_MODEL: {"attr": "AI_MODEL", "type": str, "encrypted": False, "desc": "AI subtitle translation model name"},
+    SETTING_AI_API_KEY: {"attr": "AI_API_KEY", "type": str, "encrypted": True, "desc": "AI subtitle translation API key (encrypted)"},
+    SETTING_YTDLP_COOKIES_ENABLED: {"attr": "YTDLP_COOKIES_ENABLED", "type": bool, "encrypted": False, "desc": "YouTube cookies enabled"},
+    SETTING_MUST_JOIN_ENABLED: {"attr": "MUST_JOIN_ENABLED", "type": bool, "encrypted": False, "desc": "Must-join channels enforcement enabled"},
+    SETTING_MAX_ACTIVE_JOBS: {"attr": "MAX_ACTIVE_JOBS", "type": int, "encrypted": False, "desc": "Max active worker processing jobs"},
+}
+
+
+def _cast_setting_value(val: Any, target_type: type) -> Any:
+    if target_type is bool:
+        if isinstance(val, bool):
+            return val
+        return str(val).lower() in ("true", "1", "yes", "t")
+    elif target_type is int:
+        return int(val)
+    elif target_type is str:
+        return str(val) if val is not None else ""
+    return val
+
+
+def _serialize_setting_value(val: Any) -> str:
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    return str(val)
+
 
 DEFAULT_MUST_JOIN_MESSAGE = (
     "👋 Hello {first_name}!\n\n"
@@ -984,6 +1053,12 @@ class SettingService:
                 logger.error("Failed to load ACTIVE settings: %s", e)
                 active_settings = {}
 
+            # Load persistent application settings into runtime config
+            try:
+                await cls.load_all_settings_to_runtime(session)
+            except Exception as e:
+                logger.warning("Could not load application settings into runtime during reconciliation: %s", e)
+
         bot_token = active_settings.get(SETTING_BOT_TOKEN)
         api_mode = active_settings.get(SETTING_API_MODE) or "local"
         api_id = active_settings.get(SETTING_API_ID)
@@ -1456,4 +1531,336 @@ class SettingService:
         finally:
             if own_session:
                 await sess.close()
+
+    # --------------------------------------------------------------------------
+    # Application & AI Settings (Persistent in PostgreSQL)
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    async def get_application_settings(cls, session: Optional[AsyncSession] = None) -> Dict[str, Any]:
+        """Fetch all global application settings from DB, using config defaults for uninitialized values."""
+        from src.services.ytdlp_service import YtDlpService
+        all_active = await cls.get_all_active(session)
+
+        res = {}
+        for key, spec in APP_SETTINGS_SPEC.items():
+            if key.startswith("ai_") or key in (
+                SETTING_YTDLP_COOKIES_ENABLED,
+                SETTING_MUST_JOIN_ENABLED,
+                SETTING_MAX_ACTIVE_JOBS,
+            ):
+                continue
+            attr = spec["attr"]
+            default_val = getattr(settings, attr)
+            if key in all_active:
+                try:
+                    res[key] = _cast_setting_value(all_active[key], spec["type"])
+                except (ValueError, TypeError):
+                    res[key] = default_val
+            else:
+                res[key] = default_val
+
+        dur = res.get(SETTING_MAX_VIDEO_DURATION_SECONDS, settings.MAX_VIDEO_DURATION_SECONDS)
+        res["max_video_duration_formatted"] = YtDlpService.format_duration(dur)
+        return res
+
+    @classmethod
+    async def save_application_settings(
+        cls,
+        values: Dict[str, Any],
+        session: Optional[AsyncSession] = None,
+    ) -> Dict[str, Any]:
+        """Persist global application settings to PostgreSQL and update runtime settings object."""
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            for key, val in values.items():
+                if key not in APP_SETTINGS_SPEC:
+                    continue
+                spec = APP_SETTINGS_SPEC[key]
+                clean_val = _cast_setting_value(val, spec["type"])
+                serialized = _serialize_setting_value(clean_val)
+
+                # Update in-memory settings
+                setattr(settings, spec["attr"], clean_val)
+
+                # Persist to Setting table
+                stmt = select(Setting).where(Setting.key == key, Setting.status == "ACTIVE")
+                result = await sess.execute(stmt)
+                item = result.scalar_one_or_none()
+                if item:
+                    item.value = serialized
+                    item.is_encrypted = False
+                else:
+                    sess.add(
+                        Setting(
+                            key=key,
+                            status="ACTIVE",
+                            value=serialized,
+                            is_encrypted=False,
+                            description=spec["desc"],
+                        )
+                    )
+
+            await sess.commit()
+
+            # Publish reload notification to Redis if connected
+            try:
+                r = get_redis_client()
+                await r.publish("app:config:reload", json.dumps({"type": "application_settings"}))
+            except Exception as e:
+                logger.debug("Could not publish app:config:reload to Redis: %s", e)
+
+            return await cls.get_application_settings(sess)
+        except Exception:
+            await sess.rollback()
+            raise
+        finally:
+            if own_session:
+                await sess.close()
+
+    @classmethod
+    async def get_ai_settings(cls, session: Optional[AsyncSession] = None) -> Dict[str, Any]:
+        """Fetch AI translation settings, masking the API key."""
+        from src.services.ai_service import AIService
+        all_active = await cls.get_all_active(session)
+
+        enabled = _cast_setting_value(
+            all_active.get(SETTING_AI_ENABLED, settings.AI_ENABLED), bool
+        )
+        provider = str(all_active.get(SETTING_AI_PROVIDER, settings.AI_PROVIDER))
+        base_url = str(all_active.get(SETTING_AI_BASE_URL, settings.AI_BASE_URL))
+        model = str(all_active.get(SETTING_AI_MODEL, settings.AI_MODEL))
+        api_key = all_active.get(SETTING_AI_API_KEY, settings.AI_API_KEY) or ""
+
+        masked_key = ""
+        if api_key:
+            masked_key = f"{api_key[:4]}••••••••{api_key[-4:]}" if len(api_key) > 8 else "••••••••"
+
+        return {
+            "enabled": enabled,
+            "provider": provider,
+            "base_url": base_url,
+            "model": model,
+            "api_key_masked": masked_key,
+            "is_configured": AIService.is_configured(),
+        }
+
+    @classmethod
+    async def save_ai_settings(
+        cls,
+        req: Dict[str, Any],
+        session: Optional[AsyncSession] = None,
+    ) -> Dict[str, Any]:
+        """Validate and persist AI translation settings to PostgreSQL with encrypted API key."""
+        from src.services.ai_service import AIService
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            enabled = bool(req.get("enabled", False))
+            provider = str(req.get("provider", "openai")).strip()
+            base_url = str(req.get("base_url", "https://api.openai.com/v1")).rstrip("/")
+            model = str(req.get("model", "gpt-4o-mini")).strip()
+            api_key = req.get("api_key")
+
+            # Update in-memory
+            settings.AI_ENABLED = enabled
+            settings.AI_PROVIDER = provider
+            settings.AI_BASE_URL = base_url
+            settings.AI_MODEL = model
+
+            async def _upsert(k: str, v: str, desc: str):
+                s_stmt = select(Setting).where(Setting.key == k, Setting.status == "ACTIVE")
+                s_res = await sess.execute(s_stmt)
+                item = s_res.scalar_one_or_none()
+                if item:
+                    item.value = v
+                    item.is_encrypted = False
+                else:
+                    sess.add(Setting(key=k, status="ACTIVE", value=v, is_encrypted=False, description=desc))
+
+            await _upsert(SETTING_AI_ENABLED, "true" if enabled else "false", "AI Translation Enabled")
+            await _upsert(SETTING_AI_PROVIDER, provider, "AI Translation Provider")
+            await _upsert(SETTING_AI_BASE_URL, base_url, "AI Translation Base URL")
+            await _upsert(SETTING_AI_MODEL, model, "AI Translation Model")
+
+            if api_key and str(api_key).strip():
+                clean_key = str(api_key).strip()
+                settings.AI_API_KEY = clean_key
+                master_key = await get_master_key(sess)
+                encrypted_key = encrypt_credential(clean_key, master_key)
+
+                k_stmt = select(Setting).where(Setting.key == SETTING_AI_API_KEY, Setting.status == "ACTIVE")
+                k_res = await sess.execute(k_stmt)
+                k_item = k_res.scalar_one_or_none()
+                if k_item:
+                    k_item.value = encrypted_key
+                    k_item.is_encrypted = True
+                else:
+                    sess.add(
+                        Setting(
+                            key=SETTING_AI_API_KEY,
+                            status="ACTIVE",
+                            value=encrypted_key,
+                            is_encrypted=True,
+                            description="AI Translation API Key (encrypted)",
+                        )
+                    )
+
+                # Write runtime key file for worker consumption if directory exists
+                try:
+                    runtime_dir = Path(settings.RUNTIME_BOT_TOKEN_FILE).parent
+                    if runtime_dir.is_dir():
+                        ai_key_file = runtime_dir / "ai-api-key"
+                        ai_key_file.write_text(clean_key, encoding="utf-8")
+                        try:
+                            import grp
+                            gid = grp.getgrnam("ytdl-runtime").gr_gid
+                            os.chown(ai_key_file, -1, gid)
+                        except Exception:
+                            pass
+                        ai_key_file.chmod(0o640)
+                except Exception as e:
+                    logger.debug("Could not write runtime ai-api-key file: %s", e)
+
+            await sess.commit()
+
+            # Publish reload notification
+            try:
+                r = get_redis_client()
+                await r.publish("app:config:reload", json.dumps({"type": "ai_settings"}))
+            except Exception as e:
+                logger.debug("Could not publish reload to Redis: %s", e)
+
+            return {
+                "status": "updated",
+                "is_configured": AIService.is_configured(),
+            }
+        except Exception:
+            await sess.rollback()
+            raise
+        finally:
+            if own_session:
+                await sess.close()
+
+    @classmethod
+    async def save_single_setting(
+        cls,
+        key: str,
+        value: Any,
+        description: Optional[str] = None,
+        session: Optional[AsyncSession] = None,
+    ) -> None:
+        """Persist a single application setting to PostgreSQL and update runtime settings."""
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            spec = APP_SETTINGS_SPEC.get(key)
+            target_type = spec["type"] if spec else type(value)
+            clean_val = _cast_setting_value(value, target_type)
+            serialized = _serialize_setting_value(clean_val)
+
+            if spec:
+                setattr(settings, spec["attr"], clean_val)
+            desc = description or (spec["desc"] if spec else f"Setting {key}")
+
+            stmt = select(Setting).where(Setting.key == key, Setting.status == "ACTIVE")
+            res = await sess.execute(stmt)
+            item = res.scalar_one_or_none()
+            if item:
+                item.value = serialized
+                item.is_encrypted = False
+            else:
+                sess.add(
+                    Setting(
+                        key=key,
+                        status="ACTIVE",
+                        value=serialized,
+                        is_encrypted=False,
+                        description=desc,
+                    )
+                )
+
+            await sess.commit()
+
+            try:
+                r = get_redis_client()
+                await r.publish("app:config:reload", json.dumps({"type": "single_setting", "key": key}))
+            except Exception as e:
+                logger.debug("Could not publish single_setting reload to Redis: %s", e)
+        except Exception:
+            await sess.rollback()
+            raise
+        finally:
+            if own_session:
+                await sess.close()
+
+    @classmethod
+    async def load_all_settings_to_runtime(cls, session: Optional[AsyncSession] = None) -> None:
+        """
+        Load all ACTIVE application settings from PostgreSQL into process settings.
+        Safe for Web, Bot, and Worker.
+        """
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            stmt = select(Setting).where(Setting.status == "ACTIVE")
+            res = await sess.execute(stmt)
+            items = res.scalars().all()
+
+            master_key = None
+            for item in items:
+                if item.key not in APP_SETTINGS_SPEC:
+                    continue
+                spec = APP_SETTINGS_SPEC[item.key]
+                attr = spec["attr"]
+
+                if spec["encrypted"]:
+                    # Encrypted setting (AI_API_KEY)
+                    try:
+                        if master_key is None:
+                            master_key = await get_master_key(sess)
+                        decrypted = decrypt_credential(item.value, master_key)
+                        setattr(settings, attr, decrypted)
+
+                        # Write runtime key file for Worker
+                        try:
+                            runtime_dir = Path(settings.RUNTIME_BOT_TOKEN_FILE).parent
+                            if runtime_dir.is_dir():
+                                ai_key_file = runtime_dir / "ai-api-key"
+                                ai_key_file.write_text(decrypted, encoding="utf-8")
+                                try:
+                                    import grp
+                                    gid = grp.getgrnam("ytdl-runtime").gr_gid
+                                    os.chown(ai_key_file, -1, gid)
+                                except Exception:
+                                    pass
+                                ai_key_file.chmod(0o640)
+                        except Exception:
+                            pass
+                    except Exception:
+                        # Master key not available in Bot or Worker; check runtime file
+                        try:
+                            ai_key_path = Path(settings.RUNTIME_BOT_TOKEN_FILE).parent / "ai-api-key"
+                            if ai_key_path.is_file():
+                                k = ai_key_path.read_text(encoding="utf-8").strip()
+                                if k:
+                                    setattr(settings, attr, k)
+                        except Exception:
+                            pass
+                else:
+                    # Unencrypted setting
+                    try:
+                        clean_val = _cast_setting_value(item.value, spec["type"])
+                        setattr(settings, attr, clean_val)
+                    except Exception as e:
+                        logger.warning("Could not cast setting %s (%s): %s", item.key, item.value, e)
+
+            logger.info("Loaded authoritative application settings from PostgreSQL into runtime config.")
+        except Exception as e:
+            logger.warning("Could not load application settings from PostgreSQL: %s. Using in-memory defaults.", e)
+        finally:
+            if own_session:
+                await sess.close()
+
 

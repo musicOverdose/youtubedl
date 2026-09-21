@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
     # Startup state reconciliation (authoritative ACTIVE DB -> runtime files & READY gating)
     from src.services.setting_service import SettingService
     try:
+        await SettingService.load_all_settings_to_runtime()
         await SettingService.reconcile_startup_state()
     except Exception as e:
         logger.error("Failed startup state reconciliation: %s", e)

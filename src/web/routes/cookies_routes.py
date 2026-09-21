@@ -27,13 +27,18 @@ async def get_cookies_status(admin: dict = Depends(get_current_admin)):
     return CookieService.get_status()
 
 
+from src.services.setting_service import SETTING_YTDLP_COOKIES_ENABLED, SettingService
+
+
 @router.post("/toggle")
 async def toggle_cookies(
     req: ToggleCookiesRequest,
     session: AsyncSession = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    settings.YTDLP_COOKIES_ENABLED = req.enabled
+    await SettingService.save_single_setting(
+        SETTING_YTDLP_COOKIES_ENABLED, req.enabled, description="YouTube Cookies Enabled", session=session
+    )
     await AuditService.log_action(
         session, "COOKIES_UPDATE", admin["sub"], f"Cookies toggled to {req.enabled}"
     )

@@ -37,23 +37,18 @@ def get_bot() -> Bot:
                 f"Bot token in {settings.RUNTIME_BOT_TOKEN_FILE} is empty."
             )
 
-        if (
-            settings.TELEGRAM_API_BASE_URL
-            and settings.TELEGRAM_API_BASE_URL.rstrip("/") != "https://api.telegram.org"
-        ):
-            session = AiohttpSession(
-                api=TelegramAPIServer.from_base(settings.TELEGRAM_API_BASE_URL)
-            )
-            _bot = Bot(
-                token=token,
-                session=session,
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-            )
-        else:
-            _bot = Bot(
-                token=token,
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-            )
+        from src.services.setting_service import SettingService
+        mode = getattr(settings, "TELEGRAM_API_MODE", "local")
+        endpoint = SettingService.derive_endpoint(mode)
+        is_local = (mode == "local")
+        session = AiohttpSession(
+            api=TelegramAPIServer.from_base(endpoint, is_local=is_local)
+        )
+        _bot = Bot(
+            token=token,
+            session=session,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
     return _bot
 
 

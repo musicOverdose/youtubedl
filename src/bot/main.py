@@ -7,6 +7,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from sqlalchemy import select
 
 from src.bot.handlers.audio_handler import audio_router
@@ -22,6 +23,7 @@ from src.core.database import AsyncSessionLocal
 from src.core.logger import setup_logger
 from src.core.redis import get_redis_client
 from src.models.setting import Setting
+from src.services.setting_service import SettingService
 
 logger = setup_logger("bot_main")
 
@@ -91,11 +93,44 @@ async def wait_for_readiness() -> None:
     logger.info("Runtime readiness confirmed (%s exists).", ready_file)
 
 
+async def check_bot_connectivity(bot: Bot, mode: str, endpoint: str):
+    """
+    Perform an explicit getMe check before starting polling.
+    Logs sanitized bot details and returns the User object.
+    Never exposes the bot token in logs.
+    """
+    try:
+        me = await bot.get_me()
+        logger.info(
+            "Bot authenticated successfully: @%s (ID: %s, mode: %s, endpoint: %s)",
+            me.username,
+            me.id,
+            mode,
+            endpoint,
+        )
+        return me
+    except Exception as e:
+        sanitized_err = str(e).replace(bot.token or "", "<REDACTED>")
+        logger.error(
+            "Bot authentication check (getMe) failed [mode=%s, endpoint=%s]: %s",
+            mode,
+            endpoint,
+            sanitized_err,
+        )
+        raise
+
+
 async def main() -> None:
     logger.info("Initializing Telegram Bot Service...")
 
     dp = Dispatcher()
     setup_handlers(dp)
+
+    # Load persistent application settings from PostgreSQL on bot startup
+    try:
+        await SettingService.load_all_settings_to_runtime()
+    except Exception as e:
+        logger.warning("Could not load application settings from DB on bot startup: %s", e)
 
     reload_event = asyncio.Event()
     current_version: Optional[str] = None
@@ -106,11 +141,21 @@ async def main() -> None:
             try:
                 r = get_redis_client()
                 pubsub = r.pubsub()
-                await pubsub.subscribe("telegram:config:reload")
+                await pubsub.subscribe("telegram:config:reload", "app:config:reload")
                 async for message in pubsub.listen():
                     if message and message.get("type") == "message":
-                        logger.info("Configuration reload event received via Redis. Cycling Bot session...")
-                        reload_event.set()
+                        channel = message.get("channel")
+                        if isinstance(channel, bytes):
+                            channel = channel.decode("utf-8")
+                        if channel == "app:config:reload":
+                            logger.info("Application settings reload event received. Updating runtime...")
+                            try:
+                                await SettingService.load_all_settings_to_runtime()
+                            except Exception as e:
+                                logger.warning("Failed reloading application settings: %s", e)
+                        else:
+                            logger.info("Configuration reload event received via Redis. Cycling Bot session...")
+                            reload_event.set()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -163,6 +208,8 @@ async def main() -> None:
     readiness_task = asyncio.create_task(monitor_readiness())
     heartbeat_task = asyncio.create_task(drift_heartbeat())
 
+    backoff_delay = 1.0
+
     try:
         while True:
             reload_event.clear()
@@ -180,16 +227,18 @@ async def main() -> None:
                     continue
 
             mode, current_version = await read_authoritative_config()
-            logger.info("Configuring Bot with mode: %s, config_version: %s", mode, current_version)
+            endpoint = SettingService.derive_endpoint(mode)
+            is_local = (mode == "local")
+            logger.info(
+                "Configuring Bot with mode: %s, config_version: %s, endpoint: %s",
+                mode,
+                current_version,
+                endpoint,
+            )
 
-            if mode == "local":
-                session = AiohttpSession(
-                    api=TelegramAPIServer.from_base(settings.TELEGRAM_API_BASE_URL, is_local=True)
-                )
-            else:
-                session = AiohttpSession(
-                    api=TelegramAPIServer.from_base("https://api.telegram.org")
-                )
+            session = AiohttpSession(
+                api=TelegramAPIServer.from_base(endpoint, is_local=is_local)
+            )
 
             bot = Bot(
                 token=token,
@@ -197,6 +246,17 @@ async def main() -> None:
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
             )
 
+            # Explicit safe getMe connectivity check before polling
+            try:
+                me = await check_bot_connectivity(bot, mode, endpoint)
+                backoff_delay = 1.0  # Reset backoff on successful authentication
+            except Exception:
+                await bot.session.close()
+                await asyncio.sleep(backoff_delay)
+                backoff_delay = min(backoff_delay * 2, 30.0)
+                continue
+
+            polling_start_time = asyncio.get_event_loop().time()
             polling_task = asyncio.create_task(
                 dp.start_polling(bot, allowed_updates=["message", "callback_query"])
             )
@@ -210,8 +270,29 @@ async def main() -> None:
             if polling_task in done:
                 exc = polling_task.exception() if not polling_task.cancelled() else None
                 if exc:
-                    logger.error("Bot polling stopped with error: %s", exc)
-                waiter.cancel()
+                    sanitized_exc = str(exc).replace(token, "<REDACTED>")
+                    if isinstance(exc, TelegramAPIError):
+                        logger.error(
+                            "Bot polling stopped with Telegram API error (%s): %s",
+                            type(exc).__name__,
+                            sanitized_exc,
+                            exc_info=True,
+                        )
+                    else:
+                        logger.error(
+                            "Bot polling stopped with connection/network error (%s): %s",
+                            type(exc).__name__,
+                            sanitized_exc,
+                            exc_info=True,
+                        )
+                    waiter.cancel()
+                    await bot.session.close()
+                    await asyncio.sleep(backoff_delay)
+                    backoff_delay = min(backoff_delay * 2, 30.0)
+                    continue
+                else:
+                    logger.warning("Bot polling task finished unexpectedly without exception.")
+                    waiter.cancel()
             else:
                 logger.info("Halting current polling instance (reload or unreadiness signaled)...")
                 polling_task.cancel()
@@ -219,6 +300,9 @@ async def main() -> None:
                     await polling_task
                 except (asyncio.CancelledError, Exception):
                     pass
+
+            if asyncio.get_event_loop().time() - polling_start_time > 30.0:
+                backoff_delay = 1.0
 
             await bot.session.close()
             await asyncio.sleep(0.5)

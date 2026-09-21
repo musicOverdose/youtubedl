@@ -62,13 +62,18 @@ async def get_must_join_info(
     }
 
 
+from src.services.setting_service import SETTING_MUST_JOIN_ENABLED, SettingService
+
+
 @router.post("/toggle")
 async def toggle_must_join(
     req: ToggleRequest,
     session: AsyncSession = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    settings.MUST_JOIN_ENABLED = req.enabled
+    await SettingService.save_single_setting(
+        SETTING_MUST_JOIN_ENABLED, req.enabled, description="Must Join System Enabled", session=session
+    )
     await AuditService.log_action(
         session, "SETTING_UPDATE", admin["sub"], f"Must Join system toggled to {req.enabled}"
     )

@@ -19,20 +19,15 @@ class AISettingsRequest(BaseModel):
     api_key: Optional[str] = None  # If None, keep existing key
 
 
-@router.get("")
-async def get_ai_settings(admin: dict = Depends(get_current_admin)):
-    masked_key = ""
-    if settings.AI_API_KEY:
-        masked_key = f"{settings.AI_API_KEY[:4]}••••••••{settings.AI_API_KEY[-4:]}" if len(settings.AI_API_KEY) > 8 else "••••••••"
+from src.services.setting_service import SettingService
 
-    return {
-        "enabled": settings.AI_ENABLED,
-        "provider": settings.AI_PROVIDER,
-        "base_url": settings.AI_BASE_URL,
-        "model": settings.AI_MODEL,
-        "api_key_masked": masked_key,
-        "is_configured": AIService.is_configured(),
-    }
+
+@router.get("")
+async def get_ai_settings(
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    return await SettingService.get_ai_settings(session)
 
 
 @router.post("")
@@ -41,21 +36,14 @@ async def update_ai_settings(
     session: AsyncSession = Depends(get_db),
     admin: dict = Depends(get_current_admin),
 ):
-    settings.AI_ENABLED = req.enabled
-    settings.AI_PROVIDER = req.provider
-    settings.AI_BASE_URL = req.base_url.rstrip("/")
-    settings.AI_MODEL = req.model
-
-    if req.api_key and req.api_key.strip():
-        settings.AI_API_KEY = req.api_key.strip()
-
+    res = await SettingService.save_ai_settings(req.model_dump(), session)
     await AuditService.log_action(
         session,
         "AI_UPDATE",
         admin["sub"],
         f"Updated AI settings: Provider={req.provider}, Model={req.model}, Enabled={req.enabled}",
     )
-    return {"status": "updated", "is_configured": AIService.is_configured()}
+    return res
 
 
 @router.post("/test")

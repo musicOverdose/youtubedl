@@ -146,16 +146,30 @@ document.addEventListener('DOMContentLoaded', () => {
 // Alert strip helpers (inline feedback inside sections)
 // ============================================================
 
+const ALERT_DURATIONS = {
+  success: 4000,
+  info: 4000,
+  warning: 5000,
+  error: 7000,
+};
+
+const _alertTimers = {};
+
 /**
- * Show or hide an inline alert strip.
+ * Show an inline alert strip with automatic dismissal.
  * @param {string} id - Element ID
  * @param {string} message
  * @param {'success'|'error'|'warning'|'info'} type
- * @param {number} [autoClear=0] - ms to auto-hide; 0 = stay
+ * @param {number|null} [autoClear=null] - ms to auto-hide; null uses default duration
  */
-function showAlert(id, message, type = 'info', autoClear = 0) {
+function showAlert(id, message, type = 'info', autoClear = null) {
   const el = document.getElementById(id);
   if (!el) return;
+
+  if (_alertTimers[id]) {
+    clearTimeout(_alertTimers[id]);
+    delete _alertTimers[id];
+  }
 
   const typeMap = {
     success: 'alert-strip--success',
@@ -168,18 +182,62 @@ function showAlert(id, message, type = 'info', autoClear = 0) {
 
   el.innerHTML = `${icon}<span>${escapeHtmlSafe(message)}</span>`;
   el.className = `alert-strip ${typeMap[type] || typeMap.info}`;
+  el.classList.remove('hidden');
 
-  if (autoClear > 0) {
-    setTimeout(() => {
-      el.classList.add('hidden');
-    }, autoClear);
-  }
+  const duration = (autoClear !== null && autoClear !== undefined && autoClear > 0)
+    ? autoClear
+    : (ALERT_DURATIONS[type] || 5000);
+
+  _alertTimers[id] = setTimeout(() => {
+    hideAlert(id);
+  }, duration);
 }
 
 function hideAlert(id) {
+  if (_alertTimers[id]) {
+    clearTimeout(_alertTimers[id]);
+    delete _alertTimers[id];
+  }
   const el = document.getElementById(id);
-  if (el) el.classList.add('hidden');
+  if (el) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+  }
 }
+
+function clearAllAlerts() {
+  document.querySelectorAll('.alert-strip').forEach((el) => {
+    if (el.id && el.id !== 'migration-warning') {
+      hideAlert(el.id);
+    }
+  });
+}
+
+function setupInputAlertClearers() {
+  const mappings = [
+    { containerId: 'sec-telegram', alertId: 'telegram-alert' },
+    { containerId: 'tg-welcome-msg-area', alertId: 'tg-welcome-alert' },
+    { containerId: 'sec-ai', alertId: 'ai-alert' },
+    { containerId: 'sec-settings', alertId: 'settings-alert' },
+    { containerId: 'sec-youtube', alertId: 'youtube-alert' },
+    { containerId: 'sec-cookies', alertId: 'cookies-alert' },
+    { containerId: 'sec-must-join', alertId: 'must-join-alert' },
+    { containerId: 'modal-add-channel', alertId: 'add-channel-alert' },
+    { containerId: 'login-form', alertId: 'login-error' },
+  ];
+
+  mappings.forEach(({ containerId, alertId }) => {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.addEventListener('input', () => hideAlert(alertId), { passive: true });
+    el.addEventListener('change', () => hideAlert(alertId), { passive: true });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  setupInputAlertClearers();
+});
+
 
 // ============================================================
 // Mobile sidebar toggle
