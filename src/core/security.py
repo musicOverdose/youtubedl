@@ -329,3 +329,27 @@ def verify_runtime_artifacts(mode: str = "cloud") -> bool:
         logger.error("Error verifying runtime artifacts: %s", e)
         return False
 
+
+def remove_runtime_bot_token() -> None:
+    """Remove /config/runtime/bot-token file."""
+    try:
+        p = Path(settings.RUNTIME_BOT_TOKEN_FILE)
+        if p.is_file():
+            p.unlink()
+            logger.info("Unlinked %s", settings.RUNTIME_BOT_TOKEN_FILE)
+    except Exception as e:
+        logger.warning("Could not remove %s: %s", settings.RUNTIME_BOT_TOKEN_FILE, e)
+
+
+def remove_local_bot_api_artifacts() -> None:
+    """Clean up candidate Local Bot API env file and trigger if present."""
+    for filepath in [settings.LOCAL_BOT_API_ENV_FILE, settings.LOCAL_BOT_API_TRIGGER_FILE]:
+        try:
+            p = Path(filepath)
+            if p.is_file():
+                p.unlink()
+                logger.info("Unlinked %s", filepath)
+        except Exception as e:
+            logger.warning("Could not remove %s: %s", filepath, e)
+
+

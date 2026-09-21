@@ -128,7 +128,7 @@ async def main() -> None:
 
     # Load persistent application settings from PostgreSQL on bot startup
     try:
-        await SettingService.load_all_settings_to_runtime()
+        await SettingService.load_public_settings_to_runtime()
     except Exception as e:
         logger.warning("Could not load application settings from DB on bot startup: %s", e)
 
@@ -150,7 +150,7 @@ async def main() -> None:
                         if channel == "app:config:reload":
                             logger.info("Application settings reload event received. Updating runtime...")
                             try:
-                                await SettingService.load_all_settings_to_runtime()
+                                await SettingService.load_public_settings_to_runtime()
                             except Exception as e:
                                 logger.warning("Failed reloading application settings: %s", e)
                         else:

@@ -24,6 +24,7 @@ from src.services.cache_service import CacheService
 from src.services.ffmpeg_service import FFmpegService
 from src.services.must_join_service import MustJoinService
 from src.services.queue_service import QueueService
+from src.services.setting_service import SettingService
 from src.services.system_service import SystemService
 from src.services.ytdlp_service import YtDlpService
 from src.worker.notifier import StatusNotifier
@@ -492,6 +493,12 @@ class JobProcessor:
                         job.status = JobStatus.PROCESSING.value
                         await session.commit()
                         await notifier.update("⚙️", "Translating", "Translating subtitles to Persian with AI...", force=True)
+
+                        # Sync non-secret runtime settings (e.g. AI provider, model, base url) without decrypting secrets
+                        try:
+                            await SettingService.load_public_settings_to_runtime(session)
+                        except Exception as s_err:
+                            logger.warning("Could not sync public settings before translation: %s", s_err)
 
                         ok, persian_srt, ai_err = await AIService.translate_english_to_persian(english_srt)
                         if not ok or not persian_srt:

@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import re
 from typing import List, Optional, Tuple
 import httpx
@@ -26,11 +27,30 @@ class SubtitleSegment:
 
 class AIService:
     @classmethod
+    def get_api_key(cls) -> Optional[str]:
+        """
+        Resolves AI API key strictly enforcing runtime secret isolation:
+        1. Check /config/runtime/ai-api-key first (authoritative runtime secret written by Web Admin).
+        2. Fall back to settings.AI_API_KEY only when no runtime file exists (e.g. dev/test mode).
+        Prevents stale .env keys from overriding the admin-configured runtime secret.
+        """
+        try:
+            runtime_file = Path(getattr(settings, "RUNTIME_BOT_TOKEN_FILE", "/config/runtime/bot-token")).parent / "ai-api-key"
+            if runtime_file.is_file():
+                k = runtime_file.read_text(encoding="utf-8").strip()
+                if k:
+                    return k
+        except Exception:
+            pass
+
+        return settings.AI_API_KEY or None
+
+    @classmethod
     def is_configured(cls) -> bool:
         """Verifies that AI translation is enabled and has required parameters."""
         return bool(
             settings.AI_ENABLED
-            and settings.AI_API_KEY
+            and cls.get_api_key()
             and settings.AI_BASE_URL
             and settings.AI_MODEL
         )
@@ -111,12 +131,16 @@ class AIService:
         if not cls.is_configured():
             return False, None, "AI translation is not enabled or configured"
 
+        api_key = cls.get_api_key()
+        if not api_key:
+            return False, None, "AI translation API key is not configured"
+
         segments = cls.parse_srt(english_srt_content)
         if not segments:
             return False, None, "English subtitle content is empty or invalid"
 
-        # Chunk segments to prevent context window overflow (up to 60 segments per prompt)
-        chunk_size = 60
+        # Chunk segments to prevent timeout/context window overflow (25 segments per prompt)
+        chunk_size = 25
         translated_segments: List[SubtitleSegment] = []
 
         system_prompt = (
@@ -127,14 +151,22 @@ class AIService:
             "3. Output MUST be strictly valid SRT format and nothing else. No markdown fences, no explanations.\n"
         )
 
-        for i in range(0, len(segments), chunk_size):
+        total_chunks = (len(segments) + chunk_size - 1) // chunk_size
+        logger.info(
+            "Starting Persian subtitle translation: %d segments across %d chunks (chunk_size=%d)",
+            len(segments),
+            total_chunks,
+            chunk_size,
+        )
+
+        for chunk_idx, i in enumerate(range(0, len(segments), chunk_size), 1):
             chunk = segments[i : i + chunk_size]
             chunk_srt = "\n\n".join(seg.to_srt().strip() for seg in chunk)
 
             user_prompt = f"Translate these SRT subtitles to Persian. Keep all timestamps and numbers intact:\n\n{chunk_srt}"
 
             headers = {
-                "Authorization": f"Bearer {settings.AI_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
             payload = {
@@ -148,12 +180,12 @@ class AIService:
 
             url = f"{settings.AI_BASE_URL.rstrip('/')}/chat/completions"
 
-            # Execute API call with retries
+            # Execute API call with retries and exponential backoff
             success = False
             response_text = ""
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
-                    async with httpx.AsyncClient(timeout=90.0) as client:
+                    async with httpx.AsyncClient(timeout=60.0) as client:
                         resp = await client.post(url, headers=headers, json=payload)
                         if resp.status_code == 200:
                             data = resp.json()
@@ -163,15 +195,36 @@ class AIService:
                                 response_text = re.sub(r"^```[a-zA-Z]*\n", "", response_text)
                                 response_text = re.sub(r"\n```$", "", response_text)
                             success = True
+                            logger.info(
+                                "Successfully translated chunk %d/%d (attempt %d)",
+                                chunk_idx,
+                                total_chunks,
+                                attempt + 1,
+                            )
                             break
                         else:
-                            logger.error(f"AI API responded with {resp.status_code}: {resp.text}")
+                            logger.error(
+                                "AI API responded with %s: %s (chunk %d/%d, attempt %d/3)",
+                                resp.status_code,
+                                resp.text,
+                                chunk_idx,
+                                total_chunks,
+                                attempt + 1,
+                            )
                 except Exception as e:
-                    logger.error(f"AI translation request attempt {attempt + 1} failed: {e}")
-                    await asyncio.sleep(2)
+                    logger.error(
+                        "AI translation request failed with %s: %s (chunk %d/%d, attempt %d/3)",
+                        type(e).__name__,
+                        e,
+                        chunk_idx,
+                        total_chunks,
+                        attempt + 1,
+                    )
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
 
             if not success or not response_text:
-                return False, None, "AI translation provider request failed"
+                return False, None, f"AI translation provider request failed on chunk {chunk_idx}/{total_chunks}"
 
             # Parse translated chunk
             parsed_chunk = cls.parse_srt(response_text)

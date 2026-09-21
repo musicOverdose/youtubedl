@@ -72,6 +72,21 @@ class FFmpegService:
         return can_copy_v, can_copy_a
 
     @classmethod
+    def build_scale_filter(cls, target_height: int) -> str:
+        """
+        Builds DAR-preserving scaling filter chain.
+        Uses 'dar' so display aspect ratio (including non-square sample aspect ratios) is preserved.
+        scale='if(gt(dar,16/9),{max_w},-2)':'if(gt(dar,16/9),-2,{target_height})',pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1
+        """
+        max_w = int(round(target_height * (16 / 9)))
+        if max_w % 2 != 0:
+            max_w += 1
+        return (
+            f"scale='if(gt(dar,16/9),{max_w},-2)':'if(gt(dar,16/9),-2,{target_height})',"
+            f"pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1"
+        )
+
+    @classmethod
     async def process_video(
         cls,
         input_path: str,
@@ -88,6 +103,7 @@ class FFmpegService:
         can_copy_v, can_copy_a = cls.can_stream_copy(probe_data, target_codec)
 
         cmd = ["ffmpeg", "-y", "-i", input_path]
+        scale_vf = cls.build_scale_filter(target_height)
 
         # Video codec options
         if can_copy_v:
@@ -101,7 +117,7 @@ class FFmpegService:
                     "-preset", "veryfast",
                     "-crf", "23",
                     "-pix_fmt", "yuv420p",
-                    "-vf", f"scale=-2:{target_height}",
+                    "-vf", scale_vf,
                 ])
             else:  # H265
                 cmd.extend([
@@ -109,7 +125,7 @@ class FFmpegService:
                     "-preset", "ultrafast",  # Keep low CPU on 2 cores
                     "-crf", "28",
                     "-pix_fmt", "yuv420p",
-                    "-vf", f"scale=-2:{target_height}",
+                    "-vf", scale_vf,
                 ])
 
         # Audio codec options

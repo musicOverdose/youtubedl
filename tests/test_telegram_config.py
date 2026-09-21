@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.core.config import settings
 from src.core.security import (
@@ -172,7 +172,9 @@ async def test_save_telegram_config_local_mode_validation_failure(temp_config_di
     key = await get_master_key(db_session)
 
     # Local mode with mock probe failure (e.g. TCP connection refused)
-    with patch.object(SettingService, "probe_tcp", AsyncMock(return_value=False)):
+    with patch.object(SettingService, "LOCAL_API_POLL_TIMEOUT", 0.05), \
+         patch.object(SettingService, "LOCAL_API_POLL_INTERVAL", 0.01), \
+         patch.object(SettingService, "probe_tcp", AsyncMock(return_value=False)):
         with pytest.raises(HTTPException) as exc:
             await SettingService.save_telegram_config(
                 candidate_mode="local",
@@ -349,3 +351,170 @@ async def test_must_join_custom_message(db_session):
     # 4. Reset template
     reset = await SettingService.reset_must_join_message(session=db_session)
     assert reset == DEFAULT_MUST_JOIN_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_delayed_local_api_restart_readiness_success(temp_config_dir, db_session):
+    """
+    Simulate delayed Local Bot API restart where TCP / getMe fails on initial attempts
+    and succeeds on subsequent polling attempt before timeout.
+    """
+    key = await get_master_key(db_session)
+
+    # TCP fails once, then succeeds
+    tcp_results = [False, True, True, True]
+    async def mock_tcp(*args, **kwargs):
+        return tcp_results.pop(0) if tcp_results else True
+
+    # getMe fails once, then succeeds
+    get_me_results = [
+        (False, None, "Local Bot API starting up"),
+        (True, {"id": 111222333, "username": "DelayedBot"}, ""),
+    ]
+    async def mock_get_me(*args, **kwargs):
+        return get_me_results.pop(0) if get_me_results else (True, {"id": 111222333, "username": "DelayedBot"}, "")
+
+    with patch.object(SettingService, "LOCAL_API_POLL_TIMEOUT", 1.0), \
+         patch.object(SettingService, "LOCAL_API_POLL_INTERVAL", 0.05), \
+         patch.object(SettingService, "probe_tcp", side_effect=mock_tcp), \
+         patch.object(SettingService, "probe_get_me", side_effect=mock_get_me):
+
+        res = await SettingService.save_telegram_config(
+            candidate_mode="local",
+            bot_token="111222333:DelayedBotTokenABCD12345",
+            api_id=998877,
+            api_hash="abcdefabcdefabcdefabcdefabcdefab",
+        )
+
+        assert res["status"] == "success"
+        assert res["bot_username"] == "DelayedBot"
+
+    # Verify READY exists
+    assert os.path.exists(temp_config_dir["ready"])
+
+
+@pytest.mark.asyncio
+async def test_candidate_failure_rollback_waits_for_readiness_and_restores_ready(temp_config_dir, db_session):
+    """
+    CRITICAL Correction 3:
+    When candidate validation fails and previous ACTIVE credentials exist:
+    Rollback restores old local-bot-api.env, restarts Local Bot API,
+    waits for readiness of previous ACTIVE credentials, and only re-arms READY
+    when restored runtime is verified.
+    """
+    key = await get_master_key(db_session)
+
+    # 1. Establish ACTIVE configuration
+    with patch.object(SettingService, "probe_tcp", AsyncMock(return_value=True)), \
+         patch.object(SettingService, "probe_get_me", AsyncMock(return_value=(True, {"id": 100, "username": "ExistingBot"}, ""))):
+        await SettingService.save_telegram_config(
+            candidate_mode="local",
+            bot_token="100:ExistingActiveToken12345",
+            api_id=11111,
+            api_hash="11111111111111111111111111111111",
+        )
+    assert os.path.exists(temp_config_dir["ready"])
+
+    # 2. Try mutating with candidate credentials that fail validation
+    # During rollback, poll_local_api_readiness is called for restored credentials and succeeds
+    candidate_token = "200:CandidateFailingToken12345"
+
+    async def mock_poll(token, endpoint, timeout_sec=None, interval_sec=None):
+        if token == candidate_token:
+            # Candidate validation fails
+            return False, None, "Candidate credentials rejected by Telegram"
+        elif token == "100:ExistingActiveToken12345":
+            # Restored configuration succeeds
+            return True, {"id": 100, "username": "ExistingBot"}, ""
+        return False, None, "Unknown token"
+
+    with patch.object(SettingService, "LOCAL_API_POLL_TIMEOUT", 0.2), \
+         patch.object(SettingService, "LOCAL_API_POLL_INTERVAL", 0.02), \
+         patch.object(SettingService, "poll_local_api_readiness", side_effect=mock_poll):
+
+        with pytest.raises(HTTPException) as exc:
+            await SettingService.save_telegram_config(
+                candidate_mode="local",
+                bot_token=candidate_token,
+                api_id=22222,
+                api_hash="22222222222222222222222222222222",
+            )
+        assert exc.value.status_code == 400
+        assert "rolled back to previous configuration" in exc.value.detail
+
+    # Restored configuration verified: READY must be re-armed
+    assert os.path.exists(temp_config_dir["ready"])
+    # Runtime bot-token restored to existing active token
+    with open(temp_config_dir["token"]) as f:
+        assert f.read().strip() == "100:ExistingActiveToken12345"
+
+
+@pytest.mark.asyncio
+async def test_candidate_failure_rollback_failure_leaves_ready_absent_halted(temp_config_dir, db_session):
+    """
+    CRITICAL Correction 3:
+    If rollback cannot verify restored runtime, leave READY absent and report system as halted.
+    """
+    key = await get_master_key(db_session)
+
+    # 1. Establish ACTIVE configuration
+    with patch.object(SettingService, "probe_tcp", AsyncMock(return_value=True)), \
+         patch.object(SettingService, "probe_get_me", AsyncMock(return_value=(True, {"id": 100, "username": "ExistingBot"}, ""))):
+        await SettingService.save_telegram_config(
+            candidate_mode="local",
+            bot_token="100:ExistingActiveToken12345",
+            api_id=11111,
+            api_hash="11111111111111111111111111111111",
+        )
+    assert os.path.exists(temp_config_dir["ready"])
+
+    # 2. Both candidate and rollback fail
+    with patch.object(SettingService, "LOCAL_API_POLL_TIMEOUT", 0.1), \
+         patch.object(SettingService, "LOCAL_API_POLL_INTERVAL", 0.02), \
+         patch.object(SettingService, "poll_local_api_readiness", AsyncMock(return_value=(False, None, "Total server outage"))):
+
+        with pytest.raises(HTTPException) as exc:
+            await SettingService.save_telegram_config(
+                candidate_mode="local",
+                bot_token="300:NewFailingToken123456789",
+                api_id=33333,
+                api_hash="33333333333333333333333333333333",
+            )
+        assert exc.value.status_code == 400
+
+    # System halted: READY must NOT be present!
+    assert not os.path.exists(temp_config_dir["ready"])
+
+
+@pytest.mark.asyncio
+async def test_fresh_install_candidate_failure_cleans_up_artifacts(temp_config_dir, db_session):
+    """
+    CRITICAL Correction 3:
+    Clean up failed candidate runtime artifacts on fresh installations
+    where there is no previous ACTIVE configuration.
+    """
+    key = await get_master_key(db_session)
+
+    # Ensure clean slate: no active configuration
+    await db_session.execute(delete(Setting))
+    await db_session.commit()
+
+    with patch.object(SettingService, "LOCAL_API_POLL_TIMEOUT", 0.1), \
+         patch.object(SettingService, "LOCAL_API_POLL_INTERVAL", 0.02), \
+         patch.object(SettingService, "poll_local_api_readiness", AsyncMock(return_value=(False, None, "Local Bot API startup failure"))):
+
+        with pytest.raises(HTTPException) as exc:
+            await SettingService.save_telegram_config(
+                candidate_mode="local",
+                bot_token="400:FreshInstallToken123456789",
+                api_id=44444,
+                api_hash="44444444444444444444444444444444",
+            )
+        assert exc.value.status_code == 400
+
+    # Verify candidate runtime artifacts were cleanly purged
+    assert not os.path.exists(temp_config_dir["ready"])
+    assert not os.path.exists(temp_config_dir["token"])
+    assert not os.path.exists(temp_config_dir["env"])
+    assert not os.path.exists(temp_config_dir["trigger"])
+

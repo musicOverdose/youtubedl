@@ -1,3 +1,9 @@
+# Top-level Docker Compose project name.
+# NOTE: '-p <name>' CLI flag and 'COMPOSE_PROJECT_NAME' environment variable take
+# higher precedence than this top-level 'name' field.
+# Explicitly set to 'youtubedl' to avoid accidental directory-based names (e.g. '19_*' in Portainer).
+name: youtubedl
+
 services:
   postgres:
     image: postgres:16-alpine

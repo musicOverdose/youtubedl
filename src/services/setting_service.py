@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 import aiohttp
 from fastapi import HTTPException
@@ -23,6 +24,8 @@ from src.core.security import (
     ensure_directory,
     get_master_key,
     mask_secret,
+    remove_local_bot_api_artifacts,
+    remove_runtime_bot_token,
     remove_runtime_ready,
     verify_runtime_artifacts,
     write_local_bot_api_env,
@@ -363,6 +366,9 @@ class TelegramConfigurationLock:
 
 
 class SettingService:
+    LOCAL_API_POLL_TIMEOUT: float = 20.0
+    LOCAL_API_POLL_INTERVAL: float = 1.0
+
     @staticmethod
     def derive_endpoint(mode: str) -> str:
         if mode == "cloud":
@@ -526,6 +532,53 @@ class SettingService:
         except Exception as e:
             logger.warning("getMe probe to %s encountered error: %s", sanitized_url, e)
             return False, None, str(e)
+
+    @classmethod
+    async def poll_local_api_readiness(
+        cls,
+        token: str,
+        endpoint: str,
+        timeout_sec: Optional[float] = None,
+        interval_sec: Optional[float] = None,
+    ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+        """
+        Poll Local Bot API readiness bounded by timeout_sec.
+        Extracts host and port from endpoint, probes TCP connectivity,
+        and executes sanitized getMe probe.
+        Returns: (success, user_dict, error_message)
+        """
+        eff_timeout = timeout_sec if timeout_sec is not None else cls.LOCAL_API_POLL_TIMEOUT
+        eff_interval = interval_sec if interval_sec is not None else cls.LOCAL_API_POLL_INTERVAL
+
+        parsed = urlparse(endpoint)
+        probe_host = parsed.hostname or "telegram-bot-api"
+        probe_port = parsed.port or 8081
+
+        start_time = asyncio.get_running_loop().time()
+        deadline = start_time + eff_timeout
+        last_error = ""
+
+        logger.info(
+            "Polling Local Bot API readiness on %s:%s (deadline %.1fs)...",
+            probe_host,
+            probe_port,
+            eff_timeout,
+        )
+
+        while asyncio.get_running_loop().time() < deadline:
+            tcp_ok = await cls.probe_tcp(probe_host, probe_port, timeout_sec=2.0)
+            if tcp_ok:
+                get_me_ok, bot_info, err = await cls.probe_get_me(token, endpoint)
+                if get_me_ok:
+                    logger.info("Local Bot API readiness confirmed via getMe.")
+                    return True, bot_info, ""
+                last_error = f"getMe probe failed: {err}"
+            else:
+                last_error = f"TCP connectivity probe to Local Bot API ({probe_host}:{probe_port}) failed"
+
+            await asyncio.sleep(eff_interval)
+
+        return False, None, f"Local Bot API readiness timeout after {eff_timeout:.0f}s: {last_error}"
 
     @classmethod
     async def probe_cache_channel(
@@ -755,27 +808,13 @@ class SettingService:
                 try:
                     write_local_bot_api_env(target_api_id, target_api_hash)
                     write_restart_trigger()
-                    await asyncio.sleep(1.0)
 
-                    # Probe TCP port
-                    probe_host = "telegram-bot-api"
-                    probe_port = 8081
-                    try:
-                        base_clean = settings.TELEGRAM_API_BASE_URL.split("://")[-1]
-                        parts = base_clean.split(":")
-                        probe_host = parts[0]
-                        if len(parts) > 1:
-                            probe_port = int(parts[1].split("/")[0])
-                    except Exception:
-                        pass
-
-                    tcp_ok = await cls.probe_tcp(probe_host, probe_port, timeout_sec=4.0)
-                    if not tcp_ok:
-                        raise ValueError(f"TCP connectivity probe to Local Bot API ({probe_host}:{probe_port}) failed.")
-
-                    get_me_ok, bot_info, err = await cls.probe_get_me(target_token, target_endpoint)
-                    if not get_me_ok:
-                        raise ValueError(f"Local Bot API getMe probe failed: {err}")
+                    # Bounded readiness polling (up to 20s) over TCP and getMe probe
+                    ready_ok, bot_info, err = await cls.poll_local_api_readiness(
+                        target_token, target_endpoint
+                    )
+                    if not ready_ok:
+                        raise ValueError(err)
 
                     if target_channel:
                         try:
@@ -795,23 +834,43 @@ class SettingService:
                     validation_error = str(ex)
                     logger.error("Local Bot API candidate validation failed: %s", validation_error)
 
-                    # Rollback Local Bot API runtime to existing ACTIVE credentials
-                    if existing_api_id and existing_api_hash:
+                    # Rollback Local Bot API runtime to existing ACTIVE credentials if present
+                    if existing_api_id and existing_api_hash and existing_token:
                         try:
+                            logger.info("Restoring previous ACTIVE local-bot-api.env and triggering restart...")
                             write_local_bot_api_env(existing_api_id, existing_api_hash)
                             write_restart_trigger()
-                            await asyncio.sleep(1.0)
+
+                            # CRITICAL Correction 3: Rollback must also wait for Local Bot API readiness
+                            rb_ok, rb_info, rb_err = await cls.poll_local_api_readiness(
+                                existing_token, target_endpoint
+                            )
+                            if rb_ok and verify_runtime_artifacts(mode="local"):
+                                write_runtime_ready()
+                                logger.info("Previous ACTIVE configuration successfully verified and restored. READY re-armed.")
+                            else:
+                                logger.error(
+                                    "Failed to verify restored Local Bot API runtime: %s. Leaving READY absent (system halted).",
+                                    rb_err,
+                                )
+                                remove_runtime_ready()
                         except Exception as r_err:
-                            logger.error("Failed to restore previous local-bot-api.env: %s", r_err)
+                            logger.error(
+                                "Exception during rollback of Local Bot API runtime: %s. Leaving READY absent (system halted).",
+                                r_err,
+                            )
+                            remove_runtime_ready()
+                    else:
+                        # Clean up failed candidate runtime artifacts on fresh installations (no previous ACTIVE configuration)
+                        logger.info("Fresh installation candidate validation failed. Purging candidate runtime artifacts...")
+                        remove_runtime_ready()
+                        remove_runtime_bot_token()
+                        remove_local_bot_api_artifacts()
 
                     # Delete PENDING from PostgreSQL
                     async with conn.begin():
                         async with AsyncSession(bind=conn, expire_on_commit=False) as session:
                             await session.execute(delete(Setting).where(Setting.status == "PENDING"))
-
-                    # Re-arm READY for the restored ACTIVE runtime if configured
-                    if existing_token:
-                        write_runtime_ready()
 
                     raise HTTPException(
                         status_code=400,
@@ -824,25 +883,15 @@ class SettingService:
                 # ACTIVE remains operational and READY remains present.
                 try:
                     if candidate_mode == "local":
-                        # Probe existing local server
-                        probe_host = "telegram-bot-api"
-                        probe_port = 8081
-                        try:
-                            base_clean = settings.TELEGRAM_API_BASE_URL.split("://")[-1]
-                            parts = base_clean.split(":")
-                            probe_host = parts[0]
-                            if len(parts) > 1:
-                                probe_port = int(parts[1].split("/")[0])
-                        except Exception:
-                            pass
-
-                        tcp_ok = await cls.probe_tcp(probe_host, probe_port, timeout_sec=4.0)
-                        if not tcp_ok:
-                            raise ValueError(f"TCP connectivity probe to Local Bot API ({probe_host}:{probe_port}) failed.")
-
-                    get_me_ok, bot_info, err = await cls.probe_get_me(target_token, target_endpoint)
-                    if not get_me_ok:
-                        raise ValueError(f"Bot API getMe probe failed: {err}")
+                        ready_ok, bot_info, err = await cls.poll_local_api_readiness(
+                            target_token, target_endpoint
+                        )
+                        if not ready_ok:
+                            raise ValueError(err)
+                    else:
+                        get_me_ok, bot_info, err = await cls.probe_get_me(target_token, target_endpoint)
+                        if not get_me_ok:
+                            raise ValueError(f"Bot API getMe probe failed: {err}")
 
                     if target_channel:
                         try:
@@ -1796,11 +1845,51 @@ class SettingService:
                 await sess.close()
 
     @classmethod
+    async def load_public_settings_to_runtime(cls, session: Optional[AsyncSession] = None) -> None:
+        """
+        Load non-secret ACTIVE application settings from PostgreSQL into process settings.
+        STRICT SECURITY BOUNDARY:
+        Safe for Bot and Worker. Never attempts master key retrieval or credential decryption.
+        """
+        own_session = session is None
+        sess = session or AsyncSessionLocal()
+        try:
+            stmt = select(Setting).where(Setting.status == "ACTIVE")
+            res = await sess.execute(stmt)
+            items = res.scalars().all()
+
+            for item in items:
+                if item.key not in APP_SETTINGS_SPEC:
+                    continue
+                spec = APP_SETTINGS_SPEC[item.key]
+                if spec["encrypted"]:
+                    # STRICT ISOLATION: Skip secret values completely
+                    continue
+
+                try:
+                    clean_val = _cast_setting_value(item.value, spec["type"])
+                    setattr(settings, spec["attr"], clean_val)
+                except Exception as e:
+                    logger.warning("Could not cast public setting %s (%s): %s", item.key, item.value, e)
+
+            logger.info("Loaded non-secret application settings from PostgreSQL into runtime config.")
+        except Exception as e:
+            logger.warning("Could not load public application settings from PostgreSQL: %s. Using in-memory defaults.", e)
+        finally:
+            if own_session:
+                await sess.close()
+
+    @classmethod
     async def load_all_settings_to_runtime(cls, session: Optional[AsyncSession] = None) -> None:
         """
-        Load all ACTIVE application settings from PostgreSQL into process settings.
-        Safe for Web, Bot, and Worker.
+        Load all ACTIVE application settings from PostgreSQL into process settings,
+        decrypting secrets using master key and writing /config/runtime/ai-api-key.
+        STRICT SECURITY BOUNDARY:
+        Used by Web Admin container ONLY.
         """
+        # First load non-secret settings
+        await cls.load_public_settings_to_runtime(session)
+
         own_session = session is None
         sess = session or AsyncSessionLocal()
         try:
@@ -1813,52 +1902,37 @@ class SettingService:
                 if item.key not in APP_SETTINGS_SPEC:
                     continue
                 spec = APP_SETTINGS_SPEC[item.key]
+                if not spec["encrypted"]:
+                    continue
+
                 attr = spec["attr"]
+                try:
+                    if master_key is None:
+                        master_key = await get_master_key(sess)
+                    decrypted = decrypt_credential(item.value, master_key)
+                    setattr(settings, attr, decrypted)
 
-                if spec["encrypted"]:
-                    # Encrypted setting (AI_API_KEY)
+                    # Write runtime key file for Worker
                     try:
-                        if master_key is None:
-                            master_key = await get_master_key(sess)
-                        decrypted = decrypt_credential(item.value, master_key)
-                        setattr(settings, attr, decrypted)
+                        runtime_dir = Path(settings.RUNTIME_BOT_TOKEN_FILE).parent
+                        if runtime_dir.is_dir():
+                            ai_key_file = runtime_dir / "ai-api-key"
+                            ai_key_file.write_text(decrypted, encoding="utf-8")
+                            try:
+                                import grp
+                                gid = grp.getgrnam("ytdl-runtime").gr_gid
+                                os.chown(ai_key_file, -1, gid)
+                            except Exception:
+                                pass
+                            ai_key_file.chmod(0o640)
+                    except Exception as w_err:
+                        logger.warning("Could not write runtime ai-api-key file: %s", w_err)
+                except Exception as dec_err:
+                    logger.warning("Could not decrypt setting %s: %s", item.key, dec_err)
 
-                        # Write runtime key file for Worker
-                        try:
-                            runtime_dir = Path(settings.RUNTIME_BOT_TOKEN_FILE).parent
-                            if runtime_dir.is_dir():
-                                ai_key_file = runtime_dir / "ai-api-key"
-                                ai_key_file.write_text(decrypted, encoding="utf-8")
-                                try:
-                                    import grp
-                                    gid = grp.getgrnam("ytdl-runtime").gr_gid
-                                    os.chown(ai_key_file, -1, gid)
-                                except Exception:
-                                    pass
-                                ai_key_file.chmod(0o640)
-                        except Exception:
-                            pass
-                    except Exception:
-                        # Master key not available in Bot or Worker; check runtime file
-                        try:
-                            ai_key_path = Path(settings.RUNTIME_BOT_TOKEN_FILE).parent / "ai-api-key"
-                            if ai_key_path.is_file():
-                                k = ai_key_path.read_text(encoding="utf-8").strip()
-                                if k:
-                                    setattr(settings, attr, k)
-                        except Exception:
-                            pass
-                else:
-                    # Unencrypted setting
-                    try:
-                        clean_val = _cast_setting_value(item.value, spec["type"])
-                        setattr(settings, attr, clean_val)
-                    except Exception as e:
-                        logger.warning("Could not cast setting %s (%s): %s", item.key, item.value, e)
-
-            logger.info("Loaded authoritative application settings from PostgreSQL into runtime config.")
+            logger.info("Decrypted secret application settings and synchronized runtime files in Web container.")
         except Exception as e:
-            logger.warning("Could not load application settings from PostgreSQL: %s. Using in-memory defaults.", e)
+            logger.warning("Error loading secret settings in Web: %s", e)
         finally:
             if own_session:
                 await sess.close()

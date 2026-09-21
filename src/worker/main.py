@@ -40,7 +40,7 @@ async def worker_loop():
     # Load persistent application settings from PostgreSQL
     from src.services.setting_service import SettingService
     try:
-        await SettingService.load_all_settings_to_runtime()
+        await SettingService.load_public_settings_to_runtime()
     except Exception as e:
         logger.warning("Could not load application settings from DB in worker: %s", e)
 
@@ -57,8 +57,8 @@ async def worker_loop():
                         break
                     if message and message.get("type") == "message":
                         try:
-                            await SettingService.load_all_settings_to_runtime()
-                            logger.info("Worker reloaded application settings from PostgreSQL.")
+                            await SettingService.load_public_settings_to_runtime()
+                            logger.info("Worker reloaded public application settings from PostgreSQL.")
                         except Exception as e:
                             logger.warning("Worker failed to reload application settings: %s", e)
             except asyncio.CancelledError:

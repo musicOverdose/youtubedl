@@ -486,7 +486,15 @@ async function loadAI() {
     document.getElementById('ai-provider').value         = data.provider;
     document.getElementById('ai-base-url').value         = data.base_url;
     document.getElementById('ai-model').value            = data.model;
-    document.getElementById('ai-api-key-display').textContent = data.api_key_masked || 'None';
+    const aiKeyInput = document.getElementById('ai-api-key-input');
+    const aiKeyDisplay = document.getElementById('ai-api-key-display');
+    if (data.api_key_masked) {
+      aiKeyDisplay.textContent = `Configured · ${data.api_key_masked} — Leave blank to keep existing value`;
+      if (aiKeyInput) aiKeyInput.placeholder = 'Leave blank to keep existing value';
+    } else {
+      aiKeyDisplay.textContent = 'None';
+      if (aiKeyInput) aiKeyInput.placeholder = 'sk-…';
+    }
   } catch (err) {}
 }
 
@@ -651,13 +659,31 @@ async function loadTelegramConfig() {
     onTelegramModeChange();
 
     document.getElementById('tg-derived-endpoint').value         = data.derived_endpoint || 'http://telegram-bot-api:8081';
-    document.getElementById('tg-token-masked-display').textContent = data.bot_token_masked || 'Not Set';
-    document.getElementById('tg-api-id').value                   = data.api_id || '';
 
+    const tokenInput = document.getElementById('tg-bot-token');
+    const tokenDisplay = document.getElementById('tg-token-masked-display');
+    if (data.bot_token_masked) {
+      tokenDisplay.textContent = `Configured · ${data.bot_token_masked} — Leave blank to keep existing value`;
+      if (tokenInput) tokenInput.placeholder = 'Leave blank to keep existing value';
+    } else {
+      tokenDisplay.textContent = 'Not Set';
+      if (tokenInput) tokenInput.placeholder = '123456789:ABCdefGHIjklMNOpqrSTUvwxYZ';
+    }
+
+    document.getElementById('tg-api-id').value                   = data.api_id ? String(data.api_id) : '';
     const idDisplay = document.getElementById('tg-id-display');
     if (idDisplay) idDisplay.textContent = data.api_id ? String(data.api_id) : 'Not Set';
 
-    document.getElementById('tg-hash-masked-display').textContent = data.api_hash_masked || 'Not Set';
+    const hashInput = document.getElementById('tg-api-hash');
+    const hashDisplay = document.getElementById('tg-hash-masked-display');
+    if (data.api_hash_masked) {
+      hashDisplay.textContent = `Configured · ${data.api_hash_masked} — Leave blank to keep existing value`;
+      if (hashInput) hashInput.placeholder = 'Leave blank to keep existing value';
+    } else {
+      hashDisplay.textContent = 'Not Set';
+      if (hashInput) hashInput.placeholder = '0123456789abcdef0123456789abcdef';
+    }
+
     document.getElementById('tg-cache-channel').value             = data.cache_channel_id || '';
     document.getElementById('stat-tg-version').textContent        = `v${data.config_version || 1}`;
 
