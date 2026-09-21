@@ -31,6 +31,7 @@ from src.services.must_join_service import MustJoinService
 from src.services.queue_service import QueueService
 from src.services.setting_service import SettingService
 from src.services.system_service import SystemService
+from src.services.thumbnail_service import ThumbnailService
 from src.services.ytdlp_service import YtDlpService, YouTubeSubtitleRateLimitError
 from src.worker.notifier import StatusNotifier
 from src.worker.telegram_factory import TelegramClientFactory
@@ -313,6 +314,7 @@ class JobProcessor:
                     ydl_opts.update({
                         "outtmpl": download_template,
                         "format": YtDlpService.build_video_format_spec(target_height, target_codec),
+                        "writethumbnail": True,
                     })
 
                     loop = asyncio.get_running_loop()
@@ -346,10 +348,17 @@ class JobProcessor:
                         await session.commit()
                         return
 
-                    input_files = glob.glob(os.path.join(job_dir, "input.*"))
-                    if not input_files:
+                    video_exts = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".ts", ".m4v"}
+                    thumb_exts = {".jpg", ".jpeg", ".webp", ".png"}
+
+                    all_input_files = glob.glob(os.path.join(job_dir, "input.*"))
+                    input_video_files = [f for f in all_input_files if os.path.splitext(f)[1].lower() in video_exts]
+                    input_thumb_files = [f for f in all_input_files if os.path.splitext(f)[1].lower() in thumb_exts]
+
+                    if not input_video_files:
                         raise FileNotFoundError("Downloaded video file not found")
-                    input_file = input_files[0]
+                    input_file = input_video_files[0]
+                    found_thumb_file = input_thumb_files[0] if input_thumb_files else None
 
                     job.status = JobStatus.PROCESSING.value
                     await session.commit()
@@ -377,14 +386,25 @@ class JobProcessor:
                         logger.error("Failed to extract valid video metadata from final file: %s", meta_err)
                         raise ValueError(f"Could not extract valid video metadata: {meta_err}") from meta_err
 
-                    # 2. Generate JPEG thumbnail from FINAL output video
-                    await notifier.update("🖼️", "Preparing thumbnail...", "Extracting high-quality video frame...", force=True)
+                    # 2. Look up highest-quality YouTube thumbnail URL if not already written to disk
+                    best_thumb_url = None
+                    if not found_thumb_file:
+                        try:
+                            meta_info = await YtDlpService.extract_metadata(job.canonical_url, use_cache=True)
+                            best_thumb_url = ThumbnailService.get_best_thumbnail_url(meta_info)
+                        except Exception as meta_e:
+                            logger.debug("Could not extract metadata for thumbnail URL: %s", meta_e)
+
+                    # 3. Generate high-fidelity JPEG thumbnail (official artwork prioritized, fallback to frame)
+                    await notifier.update("🖼️", "Preparing thumbnail...", "Processing official creator artwork...", force=True)
                     thumb_path = os.path.join(job_dir, "thumbnail.jpg")
                     thumb_ok = False
                     try:
-                        thumb_ok = await FFmpegService.generate_thumbnail(
+                        thumb_ok = await ThumbnailService.prepare_video_thumbnail(
                             video_path=output_file,
                             output_thumb_path=thumb_path,
+                            source_thumb_path=found_thumb_file,
+                            source_thumb_url=best_thumb_url,
                             duration=duration,
                         )
                     except Exception as thumb_err:
