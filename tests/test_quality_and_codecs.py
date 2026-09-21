@@ -76,8 +76,7 @@ async def test_aspect_ratio_preservation_synthetic(tmp_path):
     - 1080x1920 (9:16 portrait Shorts/Reels)
     - 1080x1080 (1:1 square)
     - 2560x1080 (21:9 ultrawide)
-    - 720x576 with non-square SAR (64:45 -> 16:9 DAR)
-    Verifies actual output geometry via ffprobe.
+    Verifies that -c:v copy preserves exact output geometry and DAR via ffprobe.
     """
     import os
     import subprocess
@@ -85,27 +84,27 @@ async def test_aspect_ratio_preservation_synthetic(tmp_path):
     cases = [
         # (name, input_size, extra_in_vf, target_height, expected_w, expected_h, expected_dar_ratio)
         ("landscape_16_9", "1920x1080", None, 1080, 1920, 1080, 16 / 9),
-        ("portrait_9_16", "1080x1920", None, 1080, 608, 1080, 9 / 16),
+        ("portrait_9_16", "1080x1920", None, 1080, 1080, 1920, 9 / 16),
         ("square_1_1", "1080x1080", None, 1080, 1080, 1080, 1.0),
-        ("ultrawide_21_9", "2560x1080", None, 1080, 1920, 810, 2560 / 1080),
+        ("ultrawide_21_9", "2560x1080", None, 1080, 2560, 1080, 2560 / 1080),
     ]
 
     for name, in_size, in_vf, target_h, exp_w, exp_h, exp_dar in cases:
         in_file = str(tmp_path / f"{name}_in.mp4")
         out_file = str(tmp_path / f"{name}_out.mp4")
 
-        # Generate synthetic input (VP9 video forces transcoding to H264)
+        # Generate synthetic input with H264 video
         cmd_gen = [
             "ffmpeg", "-y", "-f", "lavfi", "-i", f"testsrc=size={in_size}:rate=1",
             "-t", "0.5",
         ]
         if in_vf:
             cmd_gen.extend(["-vf", in_vf])
-        cmd_gen.extend(["-c:v", "libvpx-vp9", in_file])
+        cmd_gen.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", in_file])
         proc = subprocess.run(cmd_gen, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         assert proc.returncode == 0, f"Failed generating synthetic input {name}: {proc.stderr.decode()}"
 
-        # Process video with FFmpegService
+        # Process video with FFmpegService (strictly stream-copied)
         ok = await FFmpegService.process_video(
             input_path=in_file,
             output_path=out_file,
@@ -135,6 +134,99 @@ async def test_aspect_ratio_preservation_synthetic(tmp_path):
         assert abs(actual_dar - exp_dar) / exp_dar < 0.03, (
             f"DAR distorted for {name}: actual {actual_dar:.3f} vs expected {exp_dar:.3f}"
         )
+
+
+@pytest.mark.asyncio
+async def test_zero_reencoding_enforced_on_mismatched_codec(tmp_path):
+    """
+    Verifies that FFmpegService.process_video strictly refuses to re-encode video
+    when the source video codec does not match the requested target codec.
+    """
+    import subprocess
+
+    in_file = str(tmp_path / "vp9_video.mp4")
+    out_file = str(tmp_path / "h264_out.mp4")
+
+    # Generate synthetic VP9 input
+    cmd_gen = [
+        "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=1",
+        "-t", "0.5", "-c:v", "libvpx-vp9", in_file
+    ]
+    proc = subprocess.run(cmd_gen, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert proc.returncode == 0
+
+    # Attempting to process as H264 MUST raise RuntimeError, never transcode
+    with pytest.raises(RuntimeError, match="Video re-encoding is disabled"):
+        await FFmpegService.process_video(
+            input_path=in_file,
+            output_path=out_file,
+            target_codec="H264",
+            target_height=360,
+        )
+
+
+def test_get_available_codecs_for_height():
+    info = {
+        "formats": [
+            # 1080p has both H264 (avc1) and H265 (hev1) and VP9
+            {"format_id": "137", "vcodec": "avc1.640028", "height": 1080},
+            {"format_id": "270", "vcodec": "hev1.1.6.L93.B0", "height": 1080},
+            {"format_id": "248", "vcodec": "vp9", "height": 1080},
+            # 720p has only H264
+            {"format_id": "136", "vcodec": "h264", "height": 720},
+            {"format_id": "247", "vcodec": "vp9", "height": 720},
+            # 480p has only VP9
+            {"format_id": "244", "vcodec": "vp9", "height": 480},
+            # 360p has only H265
+            {"format_id": "300", "vcodec": "hvc1.1.6.L93.B0", "height": 360},
+        ]
+    }
+
+    assert YtDlpService.get_available_codecs_for_height(info, 1080) == ["H264", "H265"]
+    assert YtDlpService.get_available_codecs_for_height(info, 720) == ["H264"]
+    assert YtDlpService.get_available_codecs_for_height(info, 480) == []
+    assert YtDlpService.get_available_codecs_for_height(info, 360) == ["H265"]
+    assert YtDlpService.get_available_codecs_for_height(info, 240) == []
+
+
+def test_build_codec_keyboard():
+    from src.bot.keyboards import build_codec_keyboard
+
+    # Both codecs available
+    kb_both = build_codec_keyboard("test_id", 1080, ["H264", "H265"])
+    assert len(kb_both.inline_keyboard) == 3
+    assert "H.264" in kb_both.inline_keyboard[0][0].text
+    assert "c:test_id:H264:1080" == kb_both.inline_keyboard[0][0].callback_data
+    assert "H.265" in kb_both.inline_keyboard[1][0].text
+    assert "c:test_id:H265:1080" == kb_both.inline_keyboard[1][0].callback_data
+    assert "Back" in kb_both.inline_keyboard[2][0].text
+
+    # Only H264 available
+    kb_h264 = build_codec_keyboard("test_id", 720, ["H264"])
+    assert len(kb_h264.inline_keyboard) == 2
+    assert "H.264" in kb_h264.inline_keyboard[0][0].text
+    assert "Back" in kb_h264.inline_keyboard[1][0].text
+
+    # Only H265 available
+    kb_h265 = build_codec_keyboard("test_id", 360, ["H265"])
+    assert len(kb_h265.inline_keyboard) == 2
+    assert "H.265" in kb_h265.inline_keyboard[0][0].text
+    assert "Back" in kb_h265.inline_keyboard[1][0].text
+
+    # Neither available
+    kb_none = build_codec_keyboard("test_id", 480, [])
+    assert len(kb_none.inline_keyboard) == 1
+    assert "Back" in kb_none.inline_keyboard[0][0].text
+
+
+def test_render_progress_bar():
+    from src.worker.notifier import StatusNotifier
+
+    assert StatusNotifier.render_progress_bar(0.0) == "░░░░░░░░░░░░░░░░ 0%"
+    assert StatusNotifier.render_progress_bar(50.0) == "████████░░░░░░░░ 50%"
+    assert StatusNotifier.render_progress_bar(75.0) == "████████████░░░░ 75%"
+    assert StatusNotifier.render_progress_bar(100.0) == "████████████████ 100%"
+
 
 
 @pytest.mark.asyncio

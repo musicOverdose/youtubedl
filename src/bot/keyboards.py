@@ -38,31 +38,42 @@ def build_quality_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def build_codec_keyboard(source_id: str, height: int) -> InlineKeyboardMarkup:
+def build_codec_keyboard(
+    source_id: str, height: int, available_codecs: Optional[List[str]] = None
+) -> InlineKeyboardMarkup:
     """
     SECOND STEP: CODEC SELECTION
-    Only shown AFTER the user picks a resolution.
+    STRICT SOURCE-CODEC-ONLY:
+    - If H.264 is available -> show H.264
+    - If H.265 is available -> show H.265
+    - If both available -> show both
+    - If neither available -> show neither (only 'Back')
+    If available_codecs is None, defaults to ["H264", "H265"] for backward compatibility.
     """
-    keyboard = [
-        [
+    codecs = available_codecs if available_codecs is not None else ["H264", "H265"]
+    keyboard: List[List[InlineKeyboardButton]] = []
+
+    if "H264" in codecs:
+        keyboard.append([
             InlineKeyboardButton(
                 text="🎬 H.264 / AAC",
                 callback_data=f"c:{source_id}:H264:{height}",
             )
-        ],
-        [
+        ])
+    if "H265" in codecs:
+        keyboard.append([
             InlineKeyboardButton(
                 text="📦 H.265 / AAC",
                 callback_data=f"c:{source_id}:H265:{height}",
             )
-        ],
-        [
-            InlineKeyboardButton(
-                text="⬅️ Back",
-                callback_data=f"back_q:{source_id}",
-            )
-        ],
-    ]
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            text="⬅️ Back",
+            callback_data=f"back_q:{source_id}",
+        )
+    ])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

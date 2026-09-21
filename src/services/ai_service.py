@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 import re
-from typing import List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 import httpx
 from src.core.config import settings
 from src.core.logger import setup_logger
@@ -121,7 +121,10 @@ class AIService:
 
     @classmethod
     async def translate_english_to_persian(
-        cls, english_srt_content: str, max_chunks: Optional[int] = None
+        cls,
+        english_srt_content: str,
+        max_chunks: Optional[int] = None,
+        on_progress: Optional[Callable[[int, int, int], Any]] = None,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Translates English SRT subtitles to Persian using OpenAI-compatible API.
@@ -214,6 +217,14 @@ class AIService:
             response_text = ""
             last_error = ""
             for attempt in range(3):
+                if on_progress:
+                    try:
+                        res = on_progress(chunk_idx, total_chunks, attempt + 1)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as cb_err:
+                        logger.debug("AI translation on_progress callback error: %s", cb_err)
+
                 try:
                     async with httpx.AsyncClient(timeout=req_timeout, follow_redirects=True) as client:
                         resp = await client.post(url, headers=headers, json=payload)

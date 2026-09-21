@@ -141,6 +141,10 @@ def get_canonical_url(source_id: str) -> str:
     return f"https://www.youtube.com/watch?v={source_id}"
 
 
+_metadata_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_METADATA_CACHE_TTL: float = 300.0  # 5 minutes
+
+
 class YtDlpService:
     @staticmethod
     def get_base_opts(cookies_file: Optional[str] = None) -> Dict[str, Any]:
@@ -165,9 +169,17 @@ class YtDlpService:
 
     @classmethod
     async def extract_metadata(
-        cls, url: str, cookies_file: Optional[str] = None
+        cls, url: str, cookies_file: Optional[str] = None, use_cache: bool = True
     ) -> Dict[str, Any]:
-        """Extract full metadata without downloading."""
+        """Extract full metadata without downloading, using a short-lived cache when available."""
+        source_id = extract_youtube_id(url)
+        now = time.monotonic()
+
+        if use_cache and source_id and source_id in _metadata_cache:
+            ts, cached_info = _metadata_cache[source_id]
+            if now - ts < _METADATA_CACHE_TTL:
+                return cached_info
+
         loop = asyncio.get_running_loop()
         opts = cls.get_base_opts(cookies_file)
 
@@ -176,6 +188,15 @@ class YtDlpService:
                 return ydl.extract_info(url, download=False)
 
         info = await loop.run_in_executor(None, _extract)
+
+        if source_id and info:
+            # Clean expired items if cache grows
+            if len(_metadata_cache) > 50:
+                expired = [k for k, (t, _) in _metadata_cache.items() if now - t >= _METADATA_CACHE_TTL]
+                for k in expired:
+                    _metadata_cache.pop(k, None)
+            _metadata_cache[source_id] = (now, info)
+
         return info
 
     @classmethod
@@ -199,6 +220,46 @@ class YtDlpService:
 
         sorted_heights = sorted(list(heights), reverse=True)
         return sorted_heights
+
+    @classmethod
+    def get_available_codecs_for_height(cls, info: Dict[str, Any], target_height: int) -> List[str]:
+        """
+        Inspects yt-dlp format metadata for the exact target_height.
+        Returns a list of available codecs from ["H264", "H265"] that actually exist at that height.
+        Recognizes:
+        - H.264: avc1*, h264*
+        - H.265/HEVC: hev1*, hvc1*, hevc*, h265*
+        Formats with vcodec == 'none' or non-matching heights are ignored.
+        """
+        formats = info.get("formats", [])
+        codecs = set()
+
+        for f in formats:
+            h = f.get("height")
+            if h != target_height:
+                continue
+
+            vcodec = f.get("vcodec")
+            if not vcodec or vcodec == "none":
+                continue
+
+            vcodec_lower = str(vcodec).lower()
+            if vcodec_lower.startswith("avc1") or vcodec_lower.startswith("h264"):
+                codecs.add("H264")
+            elif (
+                vcodec_lower.startswith("hev1")
+                or vcodec_lower.startswith("hvc1")
+                or vcodec_lower.startswith("hevc")
+                or vcodec_lower.startswith("h265")
+            ):
+                codecs.add("H265")
+
+        res = []
+        if "H264" in codecs:
+            res.append("H264")
+        if "H265" in codecs:
+            res.append("H265")
+        return res
 
     @classmethod
     def check_english_subtitles(cls, info: Dict[str, Any]) -> Tuple[bool, Optional[str], bool]:
@@ -256,13 +317,32 @@ class YtDlpService:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
     @classmethod
-    def build_video_format_spec(cls, target_height: int) -> str:
+    def build_video_format_spec(cls, target_height: int, target_codec: Optional[str] = None) -> str:
         """
-        STRICT EXACT QUALITY:
-        Ensures height == target_height.
-        No fallback to lower/higher resolutions.
+        STRICT EXACT QUALITY & CODEC:
+        Ensures height == target_height AND video codec matches target_codec.
+        - H264: vcodec~='(?i)^(avc1|h264)'
+        - H265: vcodec~='(?i)^(hev1|hvc1|hevc|h265)'
+        Prefers compatible AAC audio (ext=m4a) for zero-conversion muxing,
+        falling back to best audio.
+        NEVER falls back to a different video codec or resolution!
         """
-        return f"bestvideo[height={target_height}]+bestaudio/best[height={target_height}]"
+        if not target_codec:
+            return f"bestvideo[height={target_height}]+bestaudio/best[height={target_height}]"
+
+        codec_upper = target_codec.upper()
+        if codec_upper == "H264":
+            vfilter = "vcodec~='(?i)^(avc1|h264)'"
+        elif codec_upper == "H265":
+            vfilter = "vcodec~='(?i)^(hev1|hvc1|hevc|h265)'"
+        else:
+            raise ValueError(f"Unsupported target codec: {target_codec}")
+
+        return (
+            f"bestvideo[height={target_height}][{vfilter}]+bestaudio[ext=m4a]/"
+            f"bestvideo[height={target_height}][{vfilter}]+bestaudio/"
+            f"best[height={target_height}][{vfilter}]"
+        )
 
     @classmethod
     async def download_subtitles(

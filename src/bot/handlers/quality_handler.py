@@ -29,8 +29,23 @@ async def on_quality_selected(callback: CallbackQuery, bot: Bot):
         if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
+    canonical_url = get_canonical_url(source_id)
+    try:
+        info = await YtDlpService.extract_metadata(canonical_url)
+        available_codecs = YtDlpService.get_available_codecs_for_height(info, height)
+    except Exception as e:
+        logger.error(f"Error checking available codecs for {source_id} at {height}p: {e}")
+        available_codecs = ["H264"]
+
+    if not available_codecs:
+        await callback.answer(
+            f"❌ Neither H.264 nor H.265 source stream is available for {height}p on YouTube.",
+            show_alert=True,
+        )
+        return
+
     # Second step: switch to Codec Selection on the SAME message
-    codec_keyboard = build_codec_keyboard(source_id, height)
+    codec_keyboard = build_codec_keyboard(source_id, height, available_codecs)
     try:
         await callback.message.edit_reply_markup(reply_markup=codec_keyboard)
     except Exception as e:

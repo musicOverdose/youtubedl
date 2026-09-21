@@ -61,5 +61,11 @@ def test_exact_quality_format_spec():
     assert "<=" not in spec_1080
     assert ">=" not in spec_1080
 
-    spec_720 = YtDlpService.build_video_format_spec(720)
-    assert "height=720" in spec_720
+    spec_720_h264 = YtDlpService.build_video_format_spec(720, "H264")
+    assert "height=720" in spec_720_h264
+    assert "vcodec~='(?i)^(avc1|h264)'" in spec_720_h264
+
+    spec_1080_h265 = YtDlpService.build_video_format_spec(1080, "H265")
+    assert "height=1080" in spec_1080_h265
+    assert "vcodec~='(?i)^(hev1|hvc1|hevc|h265)'" in spec_1080_h265
+

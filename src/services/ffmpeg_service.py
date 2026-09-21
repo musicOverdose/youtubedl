@@ -59,8 +59,8 @@ class FFmpegService:
                 if vcodec in ("h264", "avc1"):
                     can_copy_v = True
             elif target_codec.upper() == "H265":
-                # hevc, h265 can be stream-copied
-                if vcodec in ("hevc", "h265"):
+                # hevc, h265, hev1, hvc1 can be stream-copied
+                if vcodec in ("hevc", "h265", "hev1", "hvc1"):
                     can_copy_v = True
 
         if a_stream:
@@ -96,42 +96,50 @@ class FFmpegService:
         cancellation_event: Optional[asyncio.Event] = None,
     ) -> bool:
         """
-        Remuxes or transcodes video to exact output format (MP4 with target_codec + AAC).
-        Minimizes CPU by stream-copying whenever possible.
+        Remuxes video to exact output format (MP4 with target_codec + AAC).
+        STRICT SOURCE-CODEC-ONLY INVARIANT:
+        The video stream is ALWAYS stream-copied (-c:v copy).
+        NEVER re-encodes video under any circumstances.
+        If the source video stream does not match target_codec, fails immediately.
+        Audio is stream-copied when already AAC; otherwise remuxed to AAC.
         """
         probe_data = await cls.probe_file(input_path)
         can_copy_v, can_copy_a = cls.can_stream_copy(probe_data, target_codec)
 
+        if not can_copy_v:
+            streams = probe_data.get("streams", [])
+            v_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+            actual_vcodec = v_stream.get("codec_name") if v_stream else "unknown"
+            logger.error(
+                "Source video codec '%s' does not match requested target '%s'. "
+                "Video re-encoding is strictly prohibited.",
+                actual_vcodec,
+                target_codec,
+            )
+            raise RuntimeError(
+                f"Source video codec '{actual_vcodec}' does not match requested '{target_codec}'. "
+                f"Video re-encoding is disabled."
+            )
+
+        logger.info(
+            "OPERATION: DOWNLOAD + REMUX (ZERO VIDEO RE-ENCODE) for %s -> %s (codec=%s, height=%d)",
+            input_path,
+            output_path,
+            target_codec,
+            target_height,
+        )
+
         cmd = ["ffmpeg", "-y", "-i", input_path]
-        scale_vf = cls.build_scale_filter(target_height)
 
-        # Video codec options
-        if can_copy_v:
-            logger.info(f"Stream-copying video for {input_path} (no re-encoding needed!)")
-            cmd.extend(["-c:v", "copy"])
-        else:
-            logger.info(f"Transcoding video to {target_codec} for {input_path}")
-            if target_codec.upper() == "H264":
-                cmd.extend([
-                    "-c:v", "libx264",
-                    "-preset", "veryfast",
-                    "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    "-vf", scale_vf,
-                ])
-            else:  # H265
-                cmd.extend([
-                    "-c:v", "libx265",
-                    "-preset", "ultrafast",  # Keep low CPU on 2 cores
-                    "-crf", "28",
-                    "-pix_fmt", "yuv420p",
-                    "-vf", scale_vf,
-                ])
+        # Video: STRICT STREAM-COPY ONLY (NEVER RE-ENCODE)
+        cmd.extend(["-c:v", "copy"])
 
-        # Audio codec options
+        # Audio: stream copy if already AAC, otherwise audio-only transcode to AAC (fast, lightweight)
         if can_copy_a:
+            logger.info("Stream-copying audio for %s (already AAC)", input_path)
             cmd.extend(["-c:a", "copy"])
         else:
+            logger.info("Remuxing audio to AAC for %s", input_path)
             cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
         # Movflags for fast streaming start

@@ -45,7 +45,7 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
         if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
-        # 2. EXACT QUALITY VALIDATION & STALE BUTTON CHECK
+        # 2. EXACT QUALITY & CODEC VALIDATION & STALE BUTTON CHECK
         try:
             info = await YtDlpService.extract_metadata(canonical_url)
             available_heights = YtDlpService.get_available_resolutions(info)
@@ -55,6 +55,15 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
                     show_alert=True,
                 )
                 return
+
+            available_codecs = YtDlpService.get_available_codecs_for_height(info, height)
+            if codec not in available_codecs:
+                await callback.answer(
+                    f"❌ Codec {codec} is not available for {height}p from YouTube.",
+                    show_alert=True,
+                )
+                return
+
             title = info.get("title", "YouTube Video")
         except Exception as e:
             logger.error(f"Error fetching metadata for verification: {e}")

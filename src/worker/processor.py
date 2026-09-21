@@ -294,13 +294,20 @@ class JobProcessor:
 
                     job.status = JobStatus.DOWNLOADING.value
                     await session.commit()
-                    await notifier.update("⬇️", "Downloading", f"Resolution: {job.resolution}", force=True)
+                    await notifier.update("⬇️", "Downloading video", f"Resolution: {job.resolution} ({target_codec})", force=True)
+
+                    logger.info(
+                        "OPERATION: DOWNLOAD + REMUX (ZERO VIDEO RE-ENCODE) for job %s (resolution=%dp, codec=%s)",
+                        job_id,
+                        target_height,
+                        target_codec,
+                    )
 
                     download_template = os.path.join(job_dir, "input.%(ext)s")
                     ydl_opts = YtDlpService.get_base_opts()
                     ydl_opts.update({
                         "outtmpl": download_template,
-                        "format": YtDlpService.build_video_format_spec(target_height),
+                        "format": YtDlpService.build_video_format_spec(target_height, target_codec),
                     })
 
                     loop = asyncio.get_running_loop()
@@ -314,7 +321,9 @@ class JobProcessor:
                                 speed = d.get("_speed_str", "")
                                 eta = d.get("_eta_str", "")
                                 asyncio.run_coroutine_threadsafe(
-                                    notifier.update("⬇️", "Downloading", f"Progress: {pct:.1f}% | Speed: {speed} | ETA: {eta}"),
+                                    notifier.update_download_progress(
+                                        "⬇️", "Downloading video", pct, speed=speed, eta=eta
+                                    ),
                                     loop,
                                 )
                         except Exception as pe:
@@ -339,7 +348,7 @@ class JobProcessor:
 
                     job.status = JobStatus.PROCESSING.value
                     await session.commit()
-                    await notifier.update("⚙️", "Processing", f"Applying {target_codec} container...", force=True)
+                    await notifier.update("🔧", "Remuxing (stream copy)...", f"Muxing {target_codec} source into MP4 container...", force=True)
 
                     output_file = os.path.join(job_dir, "output.mp4")
                     process_ok = await FFmpegService.process_video(
@@ -364,6 +373,7 @@ class JobProcessor:
                         raise ValueError(f"Could not extract valid video metadata: {meta_err}") from meta_err
 
                     # 2. Generate JPEG thumbnail from FINAL output video
+                    await notifier.update("🖼️", "Preparing thumbnail...", "Extracting high-quality video frame...", force=True)
                     thumb_path = os.path.join(job_dir, "thumbnail.jpg")
                     thumb_ok = False
                     try:
@@ -389,7 +399,7 @@ class JobProcessor:
 
                     job.status = JobStatus.UPLOADING.value
                     await session.commit()
-                    await notifier.update("☁️", "Uploading", "Sending media to secure cache...", force=True)
+                    await notifier.update("📤", "Uploading...", "Sending video to Telegram...", force=True)
 
                     caption_text = f"🎬 <b>{job.title}</b>\n({target_codec} {job.resolution})"
                     uploaded_msg_id, file_size = await self._send_media_to_cache(
@@ -445,7 +455,9 @@ class JobProcessor:
                                 speed = d.get("_speed_str", "")
                                 eta = d.get("_eta_str", "")
                                 asyncio.run_coroutine_threadsafe(
-                                    notifier.update("⬇️", "Downloading", f"Progress: {pct:.1f}% | Speed: {speed} | ETA: {eta}"),
+                                    notifier.update_download_progress(
+                                        "🎵", "Downloading audio", pct, speed=speed, eta=eta
+                                    ),
                                     loop,
                                 )
                         except Exception as pe:
@@ -468,7 +480,7 @@ class JobProcessor:
 
                     job.status = JobStatus.PROCESSING.value
                     await session.commit()
-                    await notifier.update("⚙️", "Processing", "Converting to MP3 with ID3 tags...", force=True)
+                    await notifier.update("🎵", "Preparing MP3...", "Converting audio with ID3 tags...", force=True)
 
                     output_mp3 = os.path.join(job_dir, "output.mp3")
                     mp3_ok = await FFmpegService.extract_mp3(
@@ -482,7 +494,7 @@ class JobProcessor:
 
                     job.status = JobStatus.UPLOADING.value
                     await session.commit()
-                    await notifier.update("☁️", "Uploading", "Sending audio to secure cache...", force=True)
+                    await notifier.update("📤", "Uploading...", "Sending MP3 to Telegram...", force=True)
 
                     uploaded_msg_id, file_size = await self._send_media_to_cache(
                         bot=bot,
@@ -512,15 +524,15 @@ class JobProcessor:
                 elif job.operation == OperationType.SUBTITLE.value or job.operation == "SUBTITLE":
                     job.status = JobStatus.DOWNLOADING.value
                     await session.commit()
-                    await notifier.update("⬇️", "Downloading", "Extracting English subtitles...", force=True)
+                    await notifier.update("📝", "Downloading subtitles...", "Extracting English subtitle track...", force=True)
 
                     sub_template = os.path.join(job_dir, "subs.%(ext)s")
 
                     async def _on_sub_retry(attempt_num: int, wait_sec: float, err: Exception):
                         await notifier.update(
-                            "⏳",
-                            "Rate Limited",
-                            f"YouTube rate-limited subtitles (429). Retrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
+                            "⚠️",
+                            "YouTube Temporarily Rate-Limited",
+                            f"YouTube temporarily rate-limited subtitles.\nRetrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
                             force=True,
                         )
 
@@ -561,9 +573,18 @@ class JobProcessor:
 
                         job.status = JobStatus.PROCESSING.value
                         await session.commit()
-                        await notifier.update("⚙️", "Translating", f"Translating subtitles to Persian with AI ({total_chunks} chunks)...", force=True)
+                        await notifier.update("🌐", "Translating subtitles...", f"Translating subtitles to Persian with AI ({total_chunks} chunks)...", force=True)
 
-                        ok, persian_srt, ai_err = await AIService.translate_english_to_persian(english_srt)
+                        async def _on_ai_progress(c_idx: int, total_c: int, attempt: int):
+                            if attempt > 1:
+                                d_text = f"Chunk {c_idx}/{total_c} • Retry {attempt}/3..."
+                            else:
+                                d_text = f"Chunk {c_idx}/{total_c}"
+                            await notifier.update("🌐", "Translating subtitles", d_text)
+
+                        ok, persian_srt, ai_err = await AIService.translate_english_to_persian(
+                            english_srt, on_progress=_on_ai_progress
+                        )
                         if not ok or not persian_srt:
                             raise RuntimeError(f"Persian translation failed: {ai_err}")
                         final_srt_content = persian_srt
@@ -574,7 +595,7 @@ class JobProcessor:
 
                     job.status = JobStatus.UPLOADING.value
                     await session.commit()
-                    await notifier.update("☁️", "Uploading", "Sending subtitles to cache...", force=True)
+                    await notifier.update("📤", "Uploading...", "Sending subtitles to Telegram...", force=True)
 
                     caption_text = f"💬 <b>{job.title}</b> ({target_lang} Subtitle)"
                     uploaded_msg_id, file_size = await self._send_media_to_cache(
