@@ -90,15 +90,16 @@ async def on_audio_selected(callback: CallbackQuery, bot: Bot):
             session.add(req)
             await session.commit()
 
-            pos = await QueueService.get_derived_position(existing_job.id)
+            pos = await QueueService.get_derived_position(existing_job.id, queue_type="VIDEO")
             pos_str = f"#{pos}" if pos else "In Progress"
-            active_count = len(await QueueService.get_active_job_ids())
+            active_count = len(await QueueService.get_active_job_ids(queue_type="VIDEO"))
+            limit = getattr(settings, "MAX_ACTIVE_VIDEO_JOBS", 1)
 
             status_msg = await callback.message.answer(
                 f"⏳ <b>Attached to existing job</b>\n"
                 f"🎵 <b>MP3 Audio</b>\n"
                 f"Position: {pos_str}\n"
-                f"Active jobs: {active_count} / {settings.MAX_ACTIVE_JOBS}",
+                f"Active jobs: {active_count} / {limit}",
                 reply_markup=build_queue_status_keyboard(existing_job.id),
             )
             req.status_message_id = status_msg.message_id
@@ -132,14 +133,16 @@ async def on_audio_selected(callback: CallbackQuery, bot: Bot):
         session.add(req)
         await session.commit()
 
-        position = await QueueService.push_job(job_id)
-        active_count = len(await QueueService.get_active_job_ids())
+        # Push to VIDEO (media) queue
+        position = await QueueService.push_job(job_id, queue_type="VIDEO")
+        active_count = len(await QueueService.get_active_job_ids(queue_type="VIDEO"))
+        limit = getattr(settings, "MAX_ACTIVE_VIDEO_JOBS", 1)
 
         status_msg = await callback.message.answer(
             f"⏳ <b>Added to queue</b>\n"
             f"🎵 <b>MP3 Audio</b>\n"
             f"Position: #{position}\n"
-            f"Active: {active_count} / {settings.MAX_ACTIVE_JOBS}",
+            f"Active: {active_count} / {limit}",
             reply_markup=build_queue_status_keyboard(job_id),
         )
         req.status_message_id = status_msg.message_id

@@ -72,39 +72,79 @@ async def worker_loop():
     # Launch telemetry task
     telemetry_task = asyncio.create_task(periodic_telemetry(processor))
 
-    # 2. Main consumer loop
-    logger.info(f"Worker listening for jobs (Concurrency limit: {settings.MAX_ACTIVE_JOBS})...")
-
-    try:
+    # 2. Decoupled Consumer Loops: Video and Subtitles run completely independently
+    async def video_consumer_loop():
+        limit = getattr(settings, "MAX_ACTIVE_VIDEO_JOBS", 1)
+        logger.info(f"[Video Consumer] Listening on VIDEO queue (Concurrency limit: {limit})...")
         while running:
             try:
-                # Gating: if READY flag is absent, pause job acquisition
                 ready_file = Path(settings.RUNTIME_READY_FILE)
                 if not ready_file.is_file():
-                    logger.debug("System not READY for Telegram processing (%s missing). Pausing job acquisition...", ready_file)
                     await asyncio.sleep(1.0)
                     continue
 
-                # Atomically attempt to acquire the next job slot
-                job_id = await QueueService.acquire_next_job(settings.MAX_ACTIVE_JOBS)
-
+                active_limit = getattr(settings, "MAX_ACTIVE_VIDEO_JOBS", 1)
+                job_id = await QueueService.acquire_next_job(queue_type="VIDEO", max_active_jobs=active_limit)
                 if job_id:
-                    logger.info(f"Acquired job {job_id}. Starting execution...")
-                    # Run processing task
+                    logger.info(f"[Video Consumer] Acquired job {job_id}. Starting execution...")
                     asyncio.create_task(processor.process_job(job_id))
                 else:
-                    await asyncio.sleep(1.0)
-
+                    await asyncio.sleep(0.5)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in worker consumer loop: {e}", exc_info=True)
+                logger.error(f"Error in video consumer loop: {e}", exc_info=True)
                 await asyncio.sleep(2.0)
+        logger.info("[Video Consumer] Loop stopped.")
+
+    async def subtitle_consumer_loop():
+        limit = getattr(settings, "MAX_ACTIVE_SUBTITLE_JOBS", 2)
+        logger.info(f"[Subtitle Consumer] Listening on SUBTITLE queue (Concurrency limit: {limit})...")
+        while running:
+            try:
+                ready_file = Path(settings.RUNTIME_READY_FILE)
+                if not ready_file.is_file():
+                    await asyncio.sleep(1.0)
+                    continue
+
+                active_limit = getattr(settings, "MAX_ACTIVE_SUBTITLE_JOBS", 2)
+                job_id = await QueueService.acquire_next_job(queue_type="SUBTITLE", max_active_jobs=active_limit)
+                if job_id:
+                    logger.info(f"[Subtitle Consumer] Acquired job {job_id}. Starting execution...")
+                    asyncio.create_task(processor.process_job(job_id))
+                else:
+                    await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in subtitle consumer loop: {e}", exc_info=True)
+                await asyncio.sleep(2.0)
+        logger.info("[Subtitle Consumer] Loop stopped.")
+
+    worker_mode = getattr(settings, "WORKER_MODE", "all").lower()
+    logger.info(
+        "Worker active in mode '%s' (Video limit: %d, Subtitle limit: %d)",
+        worker_mode,
+        settings.MAX_ACTIVE_VIDEO_JOBS,
+        settings.MAX_ACTIVE_SUBTITLE_JOBS,
+    )
+
+    consumer_tasks = []
+    if worker_mode in ("all", "video"):
+        consumer_tasks.append(asyncio.create_task(video_consumer_loop()))
+    if worker_mode in ("all", "subtitle"):
+        consumer_tasks.append(asyncio.create_task(subtitle_consumer_loop()))
+
+    try:
+        await asyncio.gather(*consumer_tasks)
     finally:
         telemetry_task.cancel()
         setting_reload_task.cancel()
+        for ct in consumer_tasks:
+            ct.cancel()
 
-    logger.info("Worker consumer loop finished.")
+    logger.info("Worker consumer loops finished.")
+
 
 
 def main():

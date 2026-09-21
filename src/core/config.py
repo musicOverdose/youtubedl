@@ -48,11 +48,14 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default="dev_secret_key_please_change_in_production_32chars")
 
     # Resource & Queue Controls
-    MAX_ACTIVE_JOBS: int = Field(default=1)
-    MAX_CONCURRENT_PER_USER: int = Field(default=1)
+    MAX_ACTIVE_VIDEO_JOBS: int = Field(default=1, description="Maximum concurrent video/media download jobs")
+    MAX_ACTIVE_SUBTITLE_JOBS: int = Field(default=2, description="Maximum concurrent subtitle translation jobs")
+    MAX_ACTIVE_JOBS: int = Field(default=3, description="Total maximum active jobs limit across all queues")
+    MAX_CONCURRENT_PER_USER: int = Field(default=2, description="Maximum active concurrent jobs per user")
     MAX_QUEUED_PER_USER: int = Field(default=5)
     MAX_TEMP_STORAGE_GB: int = Field(default=30)
     MAX_UPLOAD_SIZE_MB: int = Field(default=2000)
+    WORKER_MODE: str = Field(default="all", description="Worker mode: all, video, or subtitle")
 
     # Duration Controls
     MAX_VIDEO_DURATION_SECONDS: int = Field(default=7200)

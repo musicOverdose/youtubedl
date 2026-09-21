@@ -26,9 +26,14 @@ async def on_queue_status(callback: CallbackQuery, bot: Bot):
             await callback.answer("Job not found.", show_alert=True)
             return
 
-        pos = await QueueService.get_derived_position(job_id)
-        active_ids = await QueueService.get_active_job_ids()
-        queued_ids = await QueueService.get_queued_job_ids()
+        pos = await QueueService.get_derived_position(job_id, queue_type=job.queue_type)
+        active_ids = await QueueService.get_active_job_ids(queue_type=job.queue_type)
+        queued_ids = await QueueService.get_queued_job_ids(queue_type=job.queue_type)
+        queue_limit = (
+            getattr(settings, "MAX_ACTIVE_SUBTITLE_JOBS", 2)
+            if job.queue_type == "SUBTITLE"
+            else getattr(settings, "MAX_ACTIVE_VIDEO_JOBS", 1)
+        )
 
         pos_str = f"#{pos}" if pos else ("Active (In Progress)" if job_id in active_ids else job.status)
 
@@ -38,8 +43,9 @@ async def on_queue_status(callback: CallbackQuery, bot: Bot):
             f"📊 <b>Queue Status</b>\n\n"
             f"<b>Title:</b> {job.title[:35]}...\n"
             f"<b>Request:</b> {job.operation} {quality_str}\n"
+            f"<b>Queue:</b> {job.queue_type}\n"
             f"<b>Position:</b> {pos_str}\n"
-            f"<b>Active jobs:</b> {len(active_ids)} / {settings.MAX_ACTIVE_JOBS}\n"
+            f"<b>Active jobs:</b> {len(active_ids)} / {queue_limit}\n"
             f"<b>Waiting in queue:</b> {len(queued_ids)}\n"
             f"<b>Current stage:</b> {job.status}"
         )

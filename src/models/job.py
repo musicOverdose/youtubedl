@@ -40,6 +40,24 @@ class Job(Base):
 
     requests = relationship("JobRequest", back_populates="job", cascade="all, delete-orphan")
 
+    @property
+    def queue_type(self) -> str:
+        """
+        Determines logical queue destination:
+        - SUBTITLE -> SUBTITLE queue
+        - VIDEO and AUDIO (MP3) -> VIDEO (media) queue
+        """
+        if self.operation == OperationType.SUBTITLE.value:
+            return "SUBTITLE"
+        return "VIDEO"
+
+
+def get_queue_type(operation: str) -> str:
+    """Helper to map an operation string to its logical queue type ('VIDEO' or 'SUBTITLE')."""
+    if str(operation).upper() == OperationType.SUBTITLE.value:
+        return "SUBTITLE"
+    return "VIDEO"
+
 
 Index("ix_jobs_status_created", Job.status, Job.created_at)
 Index("ix_jobs_source_codec_res", Job.source_id, Job.output_codec, Job.resolution)

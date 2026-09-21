@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import yt_dlp
 from src.bot.keyboards import build_must_join_keyboard
 from src.core.config import settings
-from src.core.constants import DeliveryStatus, JobStatus, OperationType
+from src.core.constants import (
+    REDIS_KEY_SUBTITLE_CACHE_PREFIX,
+    DeliveryStatus,
+    JobStatus,
+    OperationType,
+)
 from src.core.database import AsyncSessionLocal
 from src.core.logger import setup_logger
 from src.core.redis import get_redis_client
@@ -260,9 +265,9 @@ class JobProcessor:
                 job.error_message = disk_err
                 await session.commit()
                 await notifier.update("❌", "Failed", disk_err, force=True)
-                await QueueService.release_active_job(job_id)
-                shutil.rmtree(job_dir, ignore_errors=True)
-                shutil.rmtree(transfer_job_dir, ignore_errors=True)
+                await QueueService.release_active_job(job_id, queue_type=job.queue_type)
+                await asyncio.to_thread(shutil.rmtree, job_dir, True)
+                await asyncio.to_thread(shutil.rmtree, transfer_job_dir, True)
                 if own_bot and bot is not None:
                     await bot.session.close()
                 return
@@ -528,34 +533,63 @@ class JobProcessor:
 
                     sub_template = os.path.join(job_dir, "subs.%(ext)s")
 
-                    async def _on_sub_retry(attempt_num: int, wait_sec: float, err: Exception):
-                        await notifier.update(
-                            "⚠️",
-                            "YouTube Temporarily Rate-Limited",
-                            f"YouTube temporarily rate-limited subtitles.\nRetrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
-                            force=True,
-                        )
-
+                    # 1. Check Redis cache for already-downloaded English subtitles for this source
+                    english_srt = None
                     try:
-                        await YtDlpService.download_subtitles(
-                            url=job.canonical_url,
-                            output_template=sub_template,
-                            on_retry=_on_sub_retry,
-                        )
-                    except YouTubeSubtitleRateLimitError as rl_err:
-                        raise RuntimeError(str(rl_err)) from rl_err
+                        r = get_redis_client()
+                        sub_cache_key = f"{REDIS_KEY_SUBTITLE_CACHE_PREFIX}{job.source_id}"
+                        cached_sub = await r.get(sub_cache_key)
+                        if cached_sub:
+                            english_srt = cached_sub if isinstance(cached_sub, str) else cached_sub.decode("utf-8")
+                            logger.info("Reusing cached English subtitles from Redis for source %s", job.source_id)
+                    except Exception as ce:
+                        logger.debug("Error checking Redis subtitle cache: %s", ce)
 
-                    sub_files = glob.glob(os.path.join(job_dir, "subs*.*"))
-                    if not sub_files:
-                        raise FileNotFoundError("English subtitles could not be extracted")
+                    if not english_srt:
+                        async def _on_sub_retry(attempt_num: int, wait_sec: float, err: Exception):
+                            await notifier.update(
+                                "⚠️",
+                                "YouTube Temporarily Rate-Limited",
+                                f"YouTube temporarily rate-limited subtitles.\nRetrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
+                                force=True,
+                            )
 
-                    with open(sub_files[0], "r", encoding="utf-8", errors="ignore") as sf:
-                        raw_sub_content = sf.read()
+                        try:
+                            await YtDlpService.download_subtitles(
+                                url=job.canonical_url,
+                                output_template=sub_template,
+                                on_retry=_on_sub_retry,
+                            )
+                        except YouTubeSubtitleRateLimitError as rl_err:
+                            raise RuntimeError(str(rl_err)) from rl_err
 
-                    parsed_segs = AIService.parse_srt(raw_sub_content)
-                    if not parsed_segs:
-                        raise ValueError("Failed to parse subtitle segments")
-                    english_srt = "\n".join(seg.to_srt() for seg in parsed_segs)
+                        sub_files = glob.glob(os.path.join(job_dir, "subs*.*"))
+                        if not sub_files:
+                            raise FileNotFoundError("English subtitles could not be extracted")
+
+                        with open(sub_files[0], "r", encoding="utf-8", errors="ignore") as sf:
+                            raw_sub_content = sf.read()
+
+                        parsed_segs = AIService.parse_srt(raw_sub_content)
+                        if not parsed_segs:
+                            raise ValueError("Failed to parse subtitle segments")
+                        english_srt = "\n".join(seg.to_srt() for seg in parsed_segs)
+
+                        # Cache in Redis with 24-hour TTL (limit size to max 1 MB)
+                        try:
+                            sub_bytes = len(english_srt.encode("utf-8"))
+                            if sub_bytes <= 1024 * 1024:
+                                r = get_redis_client()
+                                await r.set(f"{REDIS_KEY_SUBTITLE_CACHE_PREFIX}{job.source_id}", english_srt, ex=86400)
+                                logger.info("Cached English subtitles in Redis for %s (%d bytes, TTL=24h)", job.source_id, sub_bytes)
+                            else:
+                                logger.debug("English subtitles for %s exceed 1 MB (%d bytes), skipping Redis cache", job.source_id, sub_bytes)
+                        except Exception as se:
+                            logger.debug("Failed to cache English subtitles in Redis: %s", se)
+                    else:
+                        parsed_segs = AIService.parse_srt(english_srt)
+                        if not parsed_segs:
+                            raise ValueError("Failed to parse cached subtitle segments")
 
                     final_srt_content = english_srt
                     target_lang = job.subtitle_lang or "EN"
@@ -576,10 +610,12 @@ class JobProcessor:
                         await notifier.update("🌐", "Translating subtitles...", f"Translating subtitles to Persian with AI ({total_chunks} chunks)...", force=True)
 
                         async def _on_ai_progress(c_idx: int, total_c: int, attempt: int):
+                            pct = (c_idx / total_c) * 100.0 if total_c > 0 else 0.0
+                            bar = StatusNotifier.render_progress_bar(pct)
                             if attempt > 1:
-                                d_text = f"Chunk {c_idx}/{total_c} • Retry {attempt}/3..."
+                                d_text = f"Chunk {c_idx}/{total_c} • Retry {attempt}/3\n{bar}"
                             else:
-                                d_text = f"Chunk {c_idx}/{total_c}"
+                                d_text = f"Chunk {c_idx}/{total_c}\n{bar}"
                             await notifier.update("🌐", "Translating subtitles", d_text)
 
                         ok, persian_srt, ai_err = await AIService.translate_english_to_persian(
@@ -702,11 +738,11 @@ class JobProcessor:
                         logger.debug("Error closing worker bot session: %s", e)
 
                 # GUARANTEED CLEANUP:
-                shutil.rmtree(job_dir, ignore_errors=True)
-                shutil.rmtree(transfer_job_dir, ignore_errors=True)
+                await asyncio.to_thread(shutil.rmtree, job_dir, True)
+                await asyncio.to_thread(shutil.rmtree, transfer_job_dir, True)
                 logger.info(f"Cleaned directories for job {job_id}")
 
-                await QueueService.release_active_job(job_id)
+                await QueueService.release_active_job(job_id, queue_type=job.queue_type)
                 await QueueService.release_cache_lock(job.cache_key)
 
                 # Report disk telemetry

@@ -74,13 +74,19 @@ class AuditAction(str, Enum):
 
 # Redis Key Patterns
 REDIS_KEY_QUEUE = "ytdl:queue:fifo"
+REDIS_KEY_QUEUE_VIDEO = "ytdl:queue:video"
+REDIS_KEY_QUEUE_SUBTITLE = "ytdl:queue:subtitle"
 REDIS_KEY_ACTIVE_JOBS = "ytdl:active_jobs:set"
+REDIS_KEY_ACTIVE_VIDEO = "ytdl:active_jobs:video"
+REDIS_KEY_ACTIVE_SUBTITLE = "ytdl:active_jobs:subtitle"
 REDIS_KEY_JOB_DATA_PREFIX = "ytdl:job:"
 REDIS_KEY_PROGRESS_PREFIX = "ytdl:progress:"
 REDIS_KEY_CACHE_LOCK_PREFIX = "ytdl:lock:cache:"
 REDIS_KEY_QUEUE_PAUSED = "ytdl:queue_paused"
 REDIS_KEY_MEMBERSHIP_PREFIX = "ytdl:membership:cache:"
 REDIS_KEY_CANCEL_PREFIX = "ytdl:cancel:"
+REDIS_KEY_METADATA_PREFIX = "ytdl:metadata:cache:"
+REDIS_KEY_SUBTITLE_CACHE_PREFIX = "ytdl:subs:en:"
 
 # Default Timeouts and Settings
 MEMBERSHIP_CACHE_TTL = 60  # seconds (non-authoritative UI cache only)

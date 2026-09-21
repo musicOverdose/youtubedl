@@ -158,6 +158,6 @@ async def retry_job(
     job.error_message = None
     await session.commit()
 
-    pos = await QueueService.push_job(job.id)
+    pos = await QueueService.push_job(job.id, queue_type=job.queue_type)
     await AuditService.log_action(session, "JOB_RETRY", admin["sub"], f"Retried job {job_id}")
-    return {"status": "requeued", "position": pos}
+    return {"status": "requeued", "position": pos, "queue": job.queue_type}

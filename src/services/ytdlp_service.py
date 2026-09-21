@@ -1,5 +1,6 @@
 import asyncio
 import errno
+import json
 import os
 import random
 import re
@@ -8,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yt_dlp
 from yt_dlp.cookies import YoutubeDLCookieJar
 from src.core.config import settings
+from src.core.constants import REDIS_KEY_METADATA_PREFIX
 from src.core.logger import setup_logger
 from src.core.redis import get_redis_client
 
@@ -171,15 +173,31 @@ class YtDlpService:
     async def extract_metadata(
         cls, url: str, cookies_file: Optional[str] = None, use_cache: bool = True
     ) -> Dict[str, Any]:
-        """Extract full metadata without downloading, using a short-lived cache when available."""
+        """Extract full metadata without downloading, using L1 in-memory and L2 Redis cache when available."""
         source_id = extract_youtube_id(url)
         now = time.monotonic()
 
+        # 1. Check L1 in-memory cache
         if use_cache and source_id and source_id in _metadata_cache:
             ts, cached_info = _metadata_cache[source_id]
             if now - ts < _METADATA_CACHE_TTL:
                 return cached_info
 
+        # 2. Check L2 Redis cache (cross-process cache between bot and worker)
+        if use_cache and source_id:
+            try:
+                r = get_redis_client()
+                redis_key = f"{REDIS_KEY_METADATA_PREFIX}{source_id}"
+                cached_json = await r.get(redis_key)
+                if cached_json:
+                    info = json.loads(cached_json)
+                    _metadata_cache[source_id] = (now, info)
+                    logger.debug("L2 Redis metadata cache hit for %s", source_id)
+                    return info
+            except Exception as e:
+                logger.debug("Error checking Redis metadata cache for %s: %s", source_id, e)
+
+        # 3. Extract via yt-dlp in executor (non-blocking)
         loop = asyncio.get_running_loop()
         opts = cls.get_base_opts(cookies_file)
 
@@ -190,14 +208,43 @@ class YtDlpService:
         info = await loop.run_in_executor(None, _extract)
 
         if source_id and info:
-            # Clean expired items if cache grows
+            # Update L1 in-memory cache
             if len(_metadata_cache) > 50:
                 expired = [k for k, (t, _) in _metadata_cache.items() if now - t >= _METADATA_CACHE_TTL]
                 for k in expired:
                     _metadata_cache.pop(k, None)
             _metadata_cache[source_id] = (now, info)
 
+            # Update L2 Redis cache with size safety protection (max 512 KB payload)
+            try:
+                r = get_redis_client()
+                redis_key = f"{REDIS_KEY_METADATA_PREFIX}{source_id}"
+
+                serialized = json.dumps(info)
+                if len(serialized) > 512 * 1024:
+                    # Prune verbose format dump to essential fields to protect VPS RAM
+                    pruned_info = dict(info)
+                    if "formats" in pruned_info:
+                        essential_fields = (
+                            "format_id", "vcodec", "acodec", "height", "width",
+                            "ext", "filesize", "filesize_approx", "fps", "format_note", "url", "tbr", "abr", "vbr"
+                        )
+                        pruned_info["formats"] = [
+                            {k: f.get(k) for k in essential_fields if k in f}
+                            for f in pruned_info["formats"]
+                        ]
+                    serialized = json.dumps(pruned_info)
+
+                if len(serialized) <= 512 * 1024:
+                    await r.set(redis_key, serialized, ex=300)
+                    logger.debug("Stored metadata in L2 Redis cache for %s (%d bytes)", source_id, len(serialized))
+                else:
+                    logger.debug("Pruned metadata for %s still exceeds 512 KB (%d bytes), skipping Redis cache", source_id, len(serialized))
+            except Exception as e:
+                logger.debug("Failed to store metadata in Redis cache: %s", e)
+
         return info
+
 
     @classmethod
     def get_available_resolutions(cls, info: Dict[str, Any]) -> List[int]:

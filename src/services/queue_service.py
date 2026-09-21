@@ -1,16 +1,20 @@
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import redis.asyncio as aioredis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.constants import (
     REDIS_KEY_ACTIVE_JOBS,
+    REDIS_KEY_ACTIVE_SUBTITLE,
+    REDIS_KEY_ACTIVE_VIDEO,
     REDIS_KEY_CACHE_LOCK_PREFIX,
     REDIS_KEY_CANCEL_PREFIX,
     REDIS_KEY_PROGRESS_PREFIX,
     REDIS_KEY_QUEUE,
     REDIS_KEY_QUEUE_PAUSED,
+    REDIS_KEY_QUEUE_SUBTITLE,
+    REDIS_KEY_QUEUE_VIDEO,
     JobStatus,
 )
 from src.core.logger import setup_logger
@@ -46,6 +50,20 @@ return nil
 
 class QueueService:
     @staticmethod
+    def get_queue_key(queue_type: str = "VIDEO") -> str:
+        """Returns the Redis list key for the given logical queue ('VIDEO' or 'SUBTITLE')."""
+        if str(queue_type).upper() == "SUBTITLE":
+            return REDIS_KEY_QUEUE_SUBTITLE
+        return REDIS_KEY_QUEUE_VIDEO
+
+    @staticmethod
+    def get_active_key(queue_type: str = "VIDEO") -> str:
+        """Returns the Redis active jobs set key for the given logical queue."""
+        if str(queue_type).upper() == "SUBTITLE":
+            return REDIS_KEY_ACTIVE_SUBTITLE
+        return REDIS_KEY_ACTIVE_VIDEO
+
+    @staticmethod
     async def is_paused() -> bool:
         r = get_redis_client()
         val = await r.get(REDIS_KEY_QUEUE_PAUSED)
@@ -63,74 +81,172 @@ class QueueService:
         await r.delete(REDIS_KEY_QUEUE_PAUSED)
         logger.info("Global queue has been RESUMED by admin")
 
-    @staticmethod
-    async def push_job(job_id: str) -> int:
+    @classmethod
+    async def push_job(cls, job_id: str, queue_type: str = "VIDEO") -> int:
         """
-        Pushes a new job ID to the end of the FIFO queue (RPUSH).
-        Returns the derived 1-based queue position.
+        Pushes a new job ID to the end of the specified FIFO queue (RPUSH).
+        Also maps job_id -> queue_type in Redis for fast status and release lookups.
+        Returns the derived 1-based queue position in that specific queue.
         """
         r = get_redis_client()
-        await r.rpush(REDIS_KEY_QUEUE, job_id)
-        queue_len = await r.llen(REDIS_KEY_QUEUE)
-        logger.info(f"Job {job_id} pushed to FIFO queue. Current queue length: {queue_len}")
+        q_key = cls.get_queue_key(queue_type)
+        q_name = "SUBTITLE" if str(queue_type).upper() == "SUBTITLE" else "VIDEO"
+
+        await r.rpush(q_key, job_id)
+        # Store queue mapping with 24-hour expiration
+        await r.set(f"ytdl:job_queue:{job_id}", q_name, ex=86400)
+
+        # For backward compatibility with legacy single-queue consumers/tests
+        if q_key != REDIS_KEY_QUEUE:
+            await r.rpush(REDIS_KEY_QUEUE, job_id)
+
+        queue_len = await r.llen(q_key)
+        logger.info(f"Job {job_id} pushed to [{q_name}] queue ({q_key}). Current length: {queue_len}")
         return queue_len
 
-    @staticmethod
-    async def acquire_next_job(max_active_jobs: int) -> Optional[str]:
+    @classmethod
+    async def acquire_next_job(
+        cls,
+        queue_type: Union[str, int] = "VIDEO",
+        max_active_jobs: Optional[int] = None,
+    ) -> Optional[str]:
         """
-        Atomically checks queue pause state and active jobs limit.
-        If slot is available, pops the next job from the queue and marks it active in Redis.
+        Atomically checks queue pause state and active jobs limit for the requested queue.
+        Supports both acquire_next_job("VIDEO", 1) and legacy acquire_next_job(max_active_jobs=1).
         """
+        if isinstance(queue_type, int):
+            max_active = queue_type
+            q_type = "VIDEO"
+        else:
+            q_type = str(queue_type).upper()
+            if max_active_jobs is not None:
+                max_active = max_active_jobs
+            else:
+                max_active = (
+                    getattr(settings, "MAX_ACTIVE_SUBTITLE_JOBS", 2)
+                    if q_type == "SUBTITLE"
+                    else getattr(settings, "MAX_ACTIVE_VIDEO_JOBS", 1)
+                )
+
+        q_key = cls.get_queue_key(q_type)
+        act_key = cls.get_active_key(q_type)
+
         r = get_redis_client()
         job_id = await r.eval(
             LUA_ACQUIRE_JOB,
             3,
-            REDIS_KEY_QUEUE,
-            REDIS_KEY_ACTIVE_JOBS,
+            q_key,
+            act_key,
             REDIS_KEY_QUEUE_PAUSED,
-            max_active_jobs,
+            max_active,
         )
+
+        if job_id:
+            # Also keep legacy active set updated for global queries
+            await r.sadd(REDIS_KEY_ACTIVE_JOBS, job_id)
+            # Remove from legacy queue list if present
+            await r.lrem(REDIS_KEY_QUEUE, 0, job_id)
+
         return job_id
 
-    @staticmethod
-    async def release_active_job(job_id: str) -> None:
-        """Removes a job from the active set upon completion, failure, or cancellation."""
+    @classmethod
+    async def release_active_job(cls, job_id: str, queue_type: Optional[str] = None) -> None:
+        """Removes a job from active set(s) upon completion, failure, or cancellation."""
         r = get_redis_client()
+        if queue_type:
+            act_key = cls.get_active_key(queue_type)
+            await r.srem(act_key, job_id)
+        else:
+            # Clean from all active sets to guarantee no leaked locks
+            await r.srem(REDIS_KEY_ACTIVE_VIDEO, job_id)
+            await r.srem(REDIS_KEY_ACTIVE_SUBTITLE, job_id)
+
         await r.srem(REDIS_KEY_ACTIVE_JOBS, job_id)
-        logger.info(f"Job {job_id} removed from active set")
+        await r.delete(f"ytdl:job_queue:{job_id}")
+        logger.info(f"Job {job_id} removed from active set(s)")
 
-    @staticmethod
-    async def get_active_job_ids() -> List[str]:
+    @classmethod
+    async def get_active_job_ids(cls, queue_type: Optional[str] = None) -> List[str]:
+        """Returns active job IDs for a specific queue, or across all queues when queue_type is None."""
         r = get_redis_client()
-        members = await r.smembers(REDIS_KEY_ACTIVE_JOBS)
-        return list(members)
+        if queue_type:
+            members = await r.smembers(cls.get_active_key(queue_type))
+            return list(members)
 
-    @staticmethod
-    async def get_queued_job_ids() -> List[str]:
+        v_members = set(await r.smembers(REDIS_KEY_ACTIVE_VIDEO))
+        s_members = set(await r.smembers(REDIS_KEY_ACTIVE_SUBTITLE))
+        legacy_members = set(await r.smembers(REDIS_KEY_ACTIVE_JOBS))
+        return list(v_members | s_members | legacy_members)
+
+    @classmethod
+    async def get_queued_job_ids(cls, queue_type: Optional[str] = None) -> List[str]:
+        """Returns queued job IDs for a specific queue, or across all queues when queue_type is None."""
         r = get_redis_client()
-        return await r.lrange(REDIS_KEY_QUEUE, 0, -1)
+        if queue_type:
+            return await r.lrange(cls.get_queue_key(queue_type), 0, -1)
 
-    @staticmethod
-    async def get_derived_position(job_id: str) -> Optional[int]:
+        v_queued = await r.lrange(REDIS_KEY_QUEUE_VIDEO, 0, -1)
+        s_queued = await r.lrange(REDIS_KEY_QUEUE_SUBTITLE, 0, -1)
+        # Deduplicate while preserving FIFO ordering
+        seen = set()
+        combined = []
+        for jid in v_queued + s_queued:
+            if jid not in seen:
+                seen.add(jid)
+                combined.append(jid)
+        return combined
+
+    @classmethod
+    async def get_derived_position(cls, job_id: str, queue_type: Optional[str] = None) -> Optional[int]:
         """
         Calculates derived 1-based queue position.
-        Position = number of valid queued jobs ahead + 1.
+        If queue_type is specified, checks that specific queue.
+        If queue_type is None, checks video queue then subtitle queue.
         Returns None if job is not currently queued.
         """
         r = get_redis_client()
-        queued = await r.lrange(REDIS_KEY_QUEUE, 0, -1)
+        if queue_type:
+            queued = await r.lrange(cls.get_queue_key(queue_type), 0, -1)
+            try:
+                return queued.index(job_id) + 1
+            except ValueError:
+                return None
+
+        # Check video queue first
+        v_queued = await r.lrange(REDIS_KEY_QUEUE_VIDEO, 0, -1)
         try:
-            idx = queued.index(job_id)
-            return idx + 1
+            return v_queued.index(job_id) + 1
+        except ValueError:
+            pass
+
+        # Check subtitle queue next
+        s_queued = await r.lrange(REDIS_KEY_QUEUE_SUBTITLE, 0, -1)
+        try:
+            return s_queued.index(job_id) + 1
+        except ValueError:
+            pass
+
+        # Check legacy queue
+        l_queued = await r.lrange(REDIS_KEY_QUEUE, 0, -1)
+        try:
+            return l_queued.index(job_id) + 1
         except ValueError:
             return None
 
-    @staticmethod
-    async def remove_from_queue(job_id: str) -> bool:
-        """Removes a job from the FIFO queue (e.g. on cancellation before starting)."""
+    @classmethod
+    async def remove_from_queue(cls, job_id: str, queue_type: Optional[str] = None) -> bool:
+        """Removes a job from the specified queue (or from all queues if queue_type is None)."""
         r = get_redis_client()
-        removed = await r.lrem(REDIS_KEY_QUEUE, 0, job_id)
-        return removed > 0
+        if queue_type:
+            removed = await r.lrem(cls.get_queue_key(queue_type), 0, job_id)
+            await r.lrem(REDIS_KEY_QUEUE, 0, job_id)
+            return removed > 0
+
+        rem_v = await r.lrem(REDIS_KEY_QUEUE_VIDEO, 0, job_id)
+        rem_s = await r.lrem(REDIS_KEY_QUEUE_SUBTITLE, 0, job_id)
+        rem_l = await r.lrem(REDIS_KEY_QUEUE, 0, job_id)
+        return (rem_v + rem_s + rem_l) > 0
+
 
     @staticmethod
     async def acquire_cache_lock(cache_key: str, job_id: str, ttl_seconds: int = 3600) -> bool:
