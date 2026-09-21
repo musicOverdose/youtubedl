@@ -23,29 +23,23 @@ class ThumbnailService:
     4. High-quality single-pass Lanczos downsampling (Image.Resampling.LANCZOS).
     5. Adaptive JPEG compression starting at quality=95 with 4:4:4 chroma subsampling (subsampling=0).
     6. Telegram Bot API compliance: JPEG format, width <= 320, height <= 320, file size < 200 KB.
-    7. High-resolution FFmpeg frame extraction fallback only when no official thumbnail exists.
+    7. Multi-URL fallback: tries candidate thumbnail URLs in descending quality if top is 404.
+    8. High-resolution FFmpeg frame extraction fallback only when no official thumbnail exists.
     """
 
     MAX_DIMENSION: int = 320
     MAX_FILE_BYTES: int = 195 * 1024  # 195 KB (strict Telegram limit is 200 KB)
 
     @classmethod
-    def get_best_thumbnail_url(cls, info: Optional[Dict[str, Any]]) -> Optional[str]:
-        """
-        Inspects yt-dlp metadata dictionary and selects the highest-quality
-        available official YouTube thumbnail URL based on width, height,
-        preference, and resolution tier heuristics.
-        """
+    def _rank_thumbnails(cls, info: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not info:
-            return None
+            return []
 
         thumbnails = info.get("thumbnails")
         if not thumbnails or not isinstance(thumbnails, list):
-            return info.get("thumbnail")
+            return []
 
         valid_thumbs = [t for t in thumbnails if isinstance(t, dict) and t.get("url")]
-        if not valid_thumbs:
-            return info.get("thumbnail")
 
         def _thumb_score(t: Dict[str, Any]) -> Tuple[int, int, int]:
             url = str(t.get("url") or "")
@@ -74,8 +68,41 @@ class ThumbnailService:
 
             return (pref, effective_area, is_jpeg)
 
-        best = max(valid_thumbs, key=_thumb_score)
-        return best.get("url") or info.get("thumbnail")
+        return sorted(valid_thumbs, key=_thumb_score, reverse=True)
+
+    @classmethod
+    def get_best_thumbnail_url(cls, info: Optional[Dict[str, Any]]) -> Optional[str]:
+        """
+        Returns the single highest-scoring official YouTube thumbnail URL.
+        """
+        sorted_thumbs = cls._rank_thumbnails(info)
+        if sorted_thumbs:
+            return sorted_thumbs[0].get("url")
+        return info.get("thumbnail") if info else None
+
+    @classmethod
+    def get_candidate_thumbnail_urls(cls, info: Optional[Dict[str, Any]]) -> List[str]:
+        """
+        Returns a deduplicated list of candidate thumbnail URLs in descending order of quality.
+        Allows graceful fallback if the top speculative URL (e.g. maxresdefault on 240p video) returns 404.
+        """
+        if not info:
+            return []
+
+        sorted_thumbs = cls._rank_thumbnails(info)
+        urls = []
+        seen = set()
+        for t in sorted_thumbs:
+            u = t.get("url")
+            if u and u not in seen:
+                seen.add(u)
+                urls.append(u)
+
+        main_thumb = info.get("thumbnail")
+        if main_thumb and main_thumb not in seen:
+            urls.append(main_thumb)
+
+        return urls
 
     @classmethod
     def fit_dimensions_inside_bounds(
@@ -216,9 +243,12 @@ class ThumbnailService:
         # Primary timestamp at ~15% of duration (avoids 0.0s/1.0s intros and black frames)
         primary_seek = min(15.0, float(dur) * 0.15) if dur > 2 else 0.0
         candidate_seeks = [primary_seek]
-        if dur > 4:
+        if dur >= 2:
             candidate_seeks.append(min(30.0, float(dur) * 0.25))
             candidate_seeks.append(float(dur) * 0.50)
+            candidate_seeks.append(float(dur) * 0.75)
+        if 1.0 not in candidate_seeks and dur > 3:
+            candidate_seeks.append(1.0)
         if 0.0 not in candidate_seeks:
             candidate_seeks.append(0.0)
 
@@ -278,13 +308,14 @@ class ThumbnailService:
         output_thumb_path: str,
         source_thumb_path: Optional[str] = None,
         source_thumb_url: Optional[str] = None,
+        source_thumb_urls: Optional[List[str]] = None,
         duration: Optional[int] = None,
     ) -> bool:
         """
         Orchestrates thumbnail preparation with strict priority:
         1. Local official YouTube thumbnail file (from yt-dlp writethumbnail).
-        2. Remote official YouTube thumbnail URL (highest quality from metadata).
-        3. Fallback native-resolution video frame extraction via FFmpeg.
+        2. Remote official YouTube thumbnail URLs (ordered by highest quality, with 404 fallback).
+        3. Fallback native-resolution frame extraction via FFmpeg.
         """
         # Priority 1: Check existing local official thumbnail file
         if source_thumb_path and os.path.exists(source_thumb_path) and os.path.getsize(source_thumb_path) > 0:
@@ -292,17 +323,24 @@ class ThumbnailService:
             ok = cls.process_image_file(source_thumb_path, output_thumb_path)
             if ok:
                 return True
-            logger.warning("Failed processing local official thumbnail; checking fallback URL")
+            logger.warning("Failed processing local official thumbnail; checking candidate URLs")
 
-        # Priority 2: Check remote official thumbnail URL
-        if source_thumb_url:
+        # Priority 2: Check remote official thumbnail URLs
+        candidate_urls: List[str] = []
+        if source_thumb_urls:
+            candidate_urls.extend(source_thumb_urls)
+        if source_thumb_url and source_thumb_url not in candidate_urls:
+            candidate_urls.insert(0, source_thumb_url)
+
+        for url in candidate_urls:
             temp_thumb = output_thumb_path + ".download.tmp"
             try:
-                logger.info("Downloading official YouTube thumbnail from: %s", source_thumb_url)
-                dl_ok = await cls.download_thumbnail_image(source_thumb_url, temp_thumb)
+                logger.info("Downloading official YouTube thumbnail from: %s", url)
+                dl_ok = await cls.download_thumbnail_image(url, temp_thumb)
                 if dl_ok:
                     ok = cls.process_image_file(temp_thumb, output_thumb_path)
                     if ok:
+                        logger.info("Successfully prepared thumbnail from official URL: %s", url)
                         return True
             finally:
                 if os.path.exists(temp_thumb):

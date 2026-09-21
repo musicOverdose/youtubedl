@@ -386,14 +386,14 @@ class JobProcessor:
                         logger.error("Failed to extract valid video metadata from final file: %s", meta_err)
                         raise ValueError(f"Could not extract valid video metadata: {meta_err}") from meta_err
 
-                    # 2. Look up highest-quality YouTube thumbnail URL if not already written to disk
-                    best_thumb_url = None
+                    # 2. Look up highest-quality YouTube thumbnail URLs if not already written to disk
+                    candidate_thumb_urls = []
                     if not found_thumb_file:
                         try:
                             meta_info = await YtDlpService.extract_metadata(job.canonical_url, use_cache=True)
-                            best_thumb_url = ThumbnailService.get_best_thumbnail_url(meta_info)
+                            candidate_thumb_urls = ThumbnailService.get_candidate_thumbnail_urls(meta_info)
                         except Exception as meta_e:
-                            logger.debug("Could not extract metadata for thumbnail URL: %s", meta_e)
+                            logger.debug("Could not extract metadata for thumbnail URLs: %s", meta_e)
 
                     # 3. Generate high-fidelity JPEG thumbnail (official artwork prioritized, fallback to frame)
                     await notifier.update("🖼️", "Preparing thumbnail...", "Processing official creator artwork...", force=True)
@@ -404,7 +404,7 @@ class JobProcessor:
                             video_path=output_file,
                             output_thumb_path=thumb_path,
                             source_thumb_path=found_thumb_file,
-                            source_thumb_url=best_thumb_url,
+                            source_thumb_urls=candidate_thumb_urls,
                             duration=duration,
                         )
                     except Exception as thumb_err:
