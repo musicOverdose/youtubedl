@@ -1,15 +1,79 @@
 import asyncio
+import errno
 import os
 import random
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import yt_dlp
+from yt_dlp.cookies import YoutubeDLCookieJar
 from src.core.config import settings
 from src.core.logger import setup_logger
 from src.core.redis import get_redis_client
 
 logger = setup_logger("ytdlp_service")
+
+
+def _is_readonly_or_permission_error(exc: Exception) -> bool:
+    """Checks if an exception is due to a read-only filesystem or restricted file permissions."""
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        if exc.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
+            return True
+        msg = str(exc).lower()
+        if "read-only" in msg or "permission denied" in msg or "operation not permitted" in msg:
+            return True
+    return False
+
+
+# Monkey-patch yt-dlp cookie saving to gracefully handle read-only cookie files/filesystems
+# (e.g., in Docker containers where cookie secrets are mounted :ro to protect credentials from mutation).
+_orig_cookiejar_save = YoutubeDLCookieJar.save
+
+
+def _safe_cookiejar_save(self, filename=None, *args, **kwargs):
+    try:
+        return _orig_cookiejar_save(self, filename, *args, **kwargs)
+    except OSError as e:
+        if _is_readonly_or_permission_error(e):
+            logger.debug(
+                "Suppressed cookiejar save on read-only cookiefile (%s): %s",
+                filename or getattr(self, "filename", None),
+                e,
+            )
+            return None
+        logger.warning(
+            "Suppressed unexpected cookiejar save error on cookiefile (%s): %s",
+            filename or getattr(self, "filename", None),
+            e,
+        )
+        return None
+    except Exception as e:
+        logger.warning("Suppressed unexpected error during cookiejar save: %s", e)
+        return None
+
+
+YoutubeDLCookieJar.save = _safe_cookiejar_save
+
+_orig_ydl_save_cookies = yt_dlp.YoutubeDL.save_cookies
+
+
+def _safe_ydl_save_cookies(self):
+    try:
+        return _orig_ydl_save_cookies(self)
+    except OSError as e:
+        if _is_readonly_or_permission_error(e):
+            logger.debug("Suppressed save_cookies on read-only cookiefile: %s", e)
+            return None
+        logger.warning("Suppressed unexpected save_cookies error on cookiefile: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("Suppressed unexpected error during save_cookies: %s", e)
+        return None
+
+
+yt_dlp.YoutubeDL.save_cookies = _safe_ydl_save_cookies
 
 
 class YouTubeSubtitleRateLimitError(Exception):

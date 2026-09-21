@@ -48,3 +48,126 @@ def test_atomic_cookie_saving(tmp_path, monkeypatch):
     deleted = CookieService.delete_cookies()
     assert deleted is True
     assert not os.path.exists(test_cookies_file)
+
+
+def test_read_only_cookie_file_loading_and_saving(tmp_path):
+    """
+    Verify yt-dlp successfully loads cookies from a read-only file (chmod 444)
+    and exits the YoutubeDL context manager cleanly without raising PermissionError or OSError.
+    """
+    import yt_dlp
+    from src.services.ytdlp_service import YtDlpService
+
+    ro_cookie_path = str(tmp_path / "readonly_cookies.txt")
+    with open(ro_cookie_path, "w") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write(".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSESSION_TOKEN\tread_only_secret\n")
+
+    os.chmod(ro_cookie_path, 0o444)
+    try:
+        opts = {"cookiefile": ro_cookie_path, "quiet": True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            cookies = list(ydl.cookiejar)
+            assert len(cookies) == 1
+            assert cookies[0].name == "SESSION_TOKEN"
+            assert cookies[0].value == "read_only_secret"
+    finally:
+        os.chmod(ro_cookie_path, 0o666)
+
+
+def test_read_only_filesystem_erofs_suppression(tmp_path):
+    """
+    Verify yt-dlp suppresses [Errno 30] Read-only file system (errno.EROFS)
+    when cookie secrets volume is mounted :ro in Docker containers.
+    """
+    import errno
+    from unittest.mock import patch
+    import yt_dlp
+    from yt_dlp.cookies import YoutubeDLCookieJar
+    from src.services.ytdlp_service import _is_readonly_or_permission_error
+
+    # Verify helper correctly flags EROFS (30)
+    erofs_exc = OSError(errno.EROFS, "Read-only file system: '/config/secrets/youtube-cookies.txt'")
+    assert _is_readonly_or_permission_error(erofs_exc) is True
+
+    cookie_path = str(tmp_path / "cookies.txt")
+    with open(cookie_path, "w") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write(".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSESSION\ttest_val\n")
+
+    with patch.object(
+        YoutubeDLCookieJar,
+        "save",
+        side_effect=OSError(errno.EROFS, "Read-only file system: '/config/secrets/youtube-cookies.txt'"),
+    ):
+        # Should not raise OSError [Errno 30]
+        with yt_dlp.YoutubeDL({"cookiefile": cookie_path, "quiet": True}) as ydl:
+            assert len(list(ydl.cookiejar)) == 1
+
+
+@pytest.mark.asyncio
+async def test_ytdlp_service_extract_metadata_with_readonly_cookiefile(tmp_path, monkeypatch):
+    """
+    Verify YtDlpService.extract_metadata succeeds cleanly when YTDLP_COOKIES_FILE
+    points to a read-only file, verifying full lifecycle without [Errno 30] or [Errno 13].
+    """
+    from unittest.mock import patch
+    import yt_dlp
+    from src.core.config import settings
+    from src.services.ytdlp_service import YtDlpService
+
+    ro_cookie_path = str(tmp_path / "youtube-cookies.txt")
+    with open(ro_cookie_path, "w") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write(".youtube.com\tTRUE\t/\tTRUE\t2147483647\tLOGIN_INFO\tauth_value\n")
+
+    os.chmod(ro_cookie_path, 0o444)
+
+    monkeypatch.setattr(settings, "YTDLP_COOKIES_ENABLED", True)
+    monkeypatch.setattr(settings, "YTDLP_COOKIES_FILE", ro_cookie_path)
+
+    fake_info = {
+        "id": "dQw4w9WgXcQ",
+        "title": "Test Title",
+        "duration": 212,
+        "formats": [{"vcodec": "avc1", "height": 1080}],
+    }
+
+    try:
+        with patch.object(yt_dlp.YoutubeDL, "extract_info", return_value=fake_info):
+            info = await YtDlpService.extract_metadata("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            assert info["id"] == "dQw4w9WgXcQ"
+            assert info["title"] == "Test Title"
+    finally:
+        os.chmod(ro_cookie_path, 0o666)
+
+
+def test_worker_download_with_readonly_secrets_mount(tmp_path, monkeypatch):
+    """
+    Simulate worker container environment where /config/secrets is mounted :ro.
+    Verifies that YoutubeDL(ydl_opts) context manager completes cleanly without
+    failing on save_cookies.
+    """
+    from unittest.mock import patch
+    import yt_dlp
+    from src.core.config import settings
+    from src.services.ytdlp_service import YtDlpService
+
+    ro_cookie_path = str(tmp_path / "youtube-cookies.txt")
+    with open(ro_cookie_path, "w") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write(".youtube.com\tTRUE\t/\tTRUE\t2147483647\tLOGIN_INFO\tauth_value\n")
+
+    os.chmod(ro_cookie_path, 0o444)
+    monkeypatch.setattr(settings, "YTDLP_COOKIES_ENABLED", True)
+    monkeypatch.setattr(settings, "YTDLP_COOKIES_FILE", ro_cookie_path)
+
+    ydl_opts = YtDlpService.get_base_opts()
+    assert ydl_opts.get("cookiefile") == ro_cookie_path
+
+    try:
+        with patch.object(yt_dlp.YoutubeDL, "download", return_value=0):
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download(["https://www.youtube.com/watch?v=dQw4w9WgXcQ"])
+    finally:
+        os.chmod(ro_cookie_path, 0o666)

@@ -124,6 +124,7 @@ services:
     volumes:
       - bot_runtime_secrets:/config/runtime:ro
       - bot_runtime_state:/config/state:ro
+      - cookie_secrets:/config/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
