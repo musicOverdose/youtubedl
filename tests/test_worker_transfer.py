@@ -180,3 +180,198 @@ async def test_startup_recovery_cleans_transfer_dir(transfer_env, db_session):
 
     # Verify orphaned folder was removed
     assert not os.path.exists(stale_folder)
+
+
+# 5. Local Bot API Mixed Mode Integration: file:// URI video + multipart thumbnail
+@pytest.mark.asyncio
+async def test_local_bot_api_mixed_mode_integration(tmp_path):
+    """
+    CRITICAL integration test against Local Bot API mixed mode:
+    Proves that aiogram SendVideo correctly builds:
+    - video supplied as local file URI (string 'file:///transfer/...')
+    - thumbnail supplied via multipart upload ('attach://...')
+    - explicit duration, width, height
+    - supports_streaming=True
+    """
+    from aiogram import Bot
+    from aiogram.methods import SendVideo
+    from aiogram.types import FSInputFile
+
+    bot = Bot("123456:RUNTIME_TOKEN")
+    thumb_file = str(tmp_path / "thumb.jpg")
+    with open(thumb_file, "wb") as f:
+        f.write(b"JPEG_THUMBNAIL_BYTES")
+
+    method = SendVideo(
+        chat_id=-1001234567890,
+        video="file:///transfer/job-test/output.mp4",
+        thumbnail=FSInputFile(thumb_file),
+        duration=75,
+        width=1920,
+        height=1080,
+        supports_streaming=True,
+    )
+
+    form_data = bot.session.build_form_data(bot, method)
+    fields = {f[0]["name"]: f for f in form_data._fields}
+
+    # 1. Video MUST be string URI (zero-multipart local handoff)
+    assert "video" in fields
+    assert fields["video"][2] == "file:///transfer/job-test/output.mp4"
+
+    # 2. Explicit metadata must be present
+    assert str(fields["duration"][2]) == "75"
+    assert str(fields["width"][2]) == "1920"
+    assert str(fields["height"][2]) == "1080"
+    assert str(fields["supports_streaming"][2]).lower() == "true"
+
+    # 3. Thumbnail must be multipart uploaded with attach:// reference
+    assert "thumbnail" in fields
+    thumb_ref = fields["thumbnail"][2]
+    assert thumb_ref.startswith("attach://")
+    attach_key = thumb_ref.replace("attach://", "")
+    assert attach_key in fields
+    assert fields[attach_key][0]["filename"] == "thumb.jpg"
+
+
+@pytest.mark.asyncio
+async def test_send_video_passes_explicit_metadata_and_thumbnail(transfer_env):
+    """
+    Verifies that _send_media_to_cache forwards explicit duration, width, height,
+    supports_streaming, and thumbnail to bot.send_video.
+    """
+    processor = JobProcessor()
+    mock_bot = MagicMock()
+    mock_bot.send_video = AsyncMock(return_value=MagicMock(message_id=777))
+
+    dummy_video = os.path.join(transfer_env["temp"], "test_meta.mp4")
+    with open(dummy_video, "wb") as f:
+        f.write(b"video data")
+
+    dummy_thumb = os.path.join(transfer_env["temp"], "test_thumb.jpg")
+    with open(dummy_thumb, "wb") as f:
+        f.write(b"thumb data")
+
+    extra_kwargs = {
+        "supports_streaming": True,
+        "duration": 120,
+        "width": 1920,
+        "height": 1080,
+        "thumbnail": FSInputFile(dummy_thumb),
+    }
+
+    msg_id, size = await processor._send_media_to_cache(
+        bot=mock_bot,
+        api_mode="local",
+        channel_id=-1001234567890,
+        local_file_path=dummy_video,
+        operation=OperationType.VIDEO.value,
+        job_id="job-meta-1",
+        job_title="Metadata Video",
+        caption="Meta Caption",
+        extra_kwargs=extra_kwargs,
+    )
+
+    assert msg_id == 777
+    call_kwargs = mock_bot.send_video.call_args.kwargs
+    assert call_kwargs["duration"] == 120
+    assert call_kwargs["width"] == 1920
+    assert call_kwargs["height"] == 1080
+    assert call_kwargs["supports_streaming"] is True
+    assert isinstance(call_kwargs["thumbnail"], FSInputFile)
+
+
+@pytest.mark.asyncio
+async def test_send_video_still_sends_when_thumbnail_fails(transfer_env):
+    """
+    Verifies that if thumbnail generation fails (thumbnail is None), the video
+    is still uploaded with explicit duration, width, and height.
+    """
+    processor = JobProcessor()
+    mock_bot = MagicMock()
+    mock_bot.send_video = AsyncMock(return_value=MagicMock(message_id=778))
+
+    dummy_video = os.path.join(transfer_env["temp"], "test_nothumb.mp4")
+    with open(dummy_video, "wb") as f:
+        f.write(b"video data")
+
+    extra_kwargs = {
+        "supports_streaming": True,
+        "duration": 90,
+        "width": 1280,
+        "height": 720,
+    }
+
+    msg_id, size = await processor._send_media_to_cache(
+        bot=mock_bot,
+        api_mode="local",
+        channel_id=-1001234567890,
+        local_file_path=dummy_video,
+        operation=OperationType.VIDEO.value,
+        job_id="job-nothumb",
+        job_title="No Thumb Video",
+        caption="No Thumb Caption",
+        extra_kwargs=extra_kwargs,
+    )
+
+    assert msg_id == 778
+    call_kwargs = mock_bot.send_video.call_args.kwargs
+    assert call_kwargs["duration"] == 90
+    assert call_kwargs["width"] == 1280
+    assert call_kwargs["height"] == 720
+    assert "thumbnail" not in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_send_video_uses_final_output_metadata_not_youtube(transfer_env, monkeypatch):
+    """
+    Verifies that the metadata passed to send_video is derived from the FINAL
+    output video via ffprobe, and does NOT come from YouTube's initial metadata.
+    """
+    from src.services.ffmpeg_service import FFmpegService
+
+    processor = JobProcessor()
+    mock_bot = MagicMock()
+    mock_bot.send_video = AsyncMock(return_value=MagicMock(message_id=779))
+
+    dummy_video = os.path.join(transfer_env["temp"], "final_output.mp4")
+    with open(dummy_video, "wb") as f:
+        f.write(b"final video bytes")
+
+    # YouTube initial metadata: 1920x1080, duration 300s
+    # Transcoded final output: 608x1080 (DAR-preserved portrait Shorts), duration 298s
+    final_output_metadata = (298, 608, 1080)
+
+    monkeypatch.setattr(
+        FFmpegService,
+        "extract_video_metadata",
+        AsyncMock(return_value=final_output_metadata),
+    )
+
+    duration, width, height = await FFmpegService.extract_video_metadata(dummy_video)
+    extra_kwargs = {
+        "supports_streaming": True,
+        "duration": duration,
+        "width": width,
+        "height": height,
+    }
+
+    msg_id, size = await processor._send_media_to_cache(
+        bot=mock_bot,
+        api_mode="local",
+        channel_id=-1001234567890,
+        local_file_path=dummy_video,
+        operation=OperationType.VIDEO.value,
+        job_id="job-final-meta",
+        job_title="Final Output Video",
+        caption="Caption",
+        extra_kwargs=extra_kwargs,
+    )
+
+    assert msg_id == 779
+    call_kwargs = mock_bot.send_video.call_args.kwargs
+    assert call_kwargs["duration"] == 298
+    assert call_kwargs["width"] == 608
+    assert call_kwargs["height"] == 1080
+
+

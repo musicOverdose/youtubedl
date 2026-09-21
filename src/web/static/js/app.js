@@ -326,22 +326,42 @@ async function loadMustJoin() {
 
     const tbody = document.getElementById('tbody-must-join');
     if (data.channels.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No required channels configured</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No required channels configured</td></tr>';
     } else {
-      tbody.innerHTML = data.channels.map(ch => `
-        <tr>
-          <td><code>${ch.chat_id}</code></td>
-          <td><b>${escapeHtml(ch.title)}</b></td>
-          <td>${ch.username ? `@${ch.username}` : (ch.invite_url ? `<a href="${ch.invite_url}" target="_blank" rel="noopener">Invite link</a>` : 'N/A')}</td>
-          <td><span class="badge ${ch.bot_status === 'administrator' ? 'badge-success' : 'badge-danger'}">${ch.bot_status}</span></td>
-          <td><span class="badge ${ch.enabled ? 'badge-success' : 'badge-secondary'}">${ch.enabled ? 'YES' : 'NO'}</span></td>
-          <td class="font-sm">${formatDate(ch.last_bot_check)}</td>
-          <td>
-            <button class="btn btn-secondary btn-sm" onclick="testChannel(${ch.id})">Test</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteChannel(${ch.id})">Delete</button>
-          </td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = data.channels.map(ch => {
+        let linkHtml = '<span class="badge badge-warning">Missing Join Link</span>';
+        if (ch.invite_url) {
+          linkHtml = `<a href="${escapeHtml(ch.invite_url)}" target="_blank" rel="noopener" class="link">Invite Link</a>`;
+        } else if (ch.username) {
+          const u = ch.username.replace(/^@/, '');
+          linkHtml = `<a href="https://t.me/${escapeHtml(u)}" target="_blank" rel="noopener" class="link">@${escapeHtml(u)}</a>`;
+        }
+
+        const isVerified = ch.bot_status === 'administrator';
+        const botStatusHtml = isVerified
+          ? '<span class="badge badge-success">Verified Admin</span>'
+          : `<span class="badge badge-danger">${escapeHtml(ch.bot_status || 'Unverified')}</span>`;
+
+        const errorHtml = ch.last_error
+          ? `<span class="text-danger font-xs" title="${escapeHtml(ch.last_error)}">${escapeHtml(ch.last_error.length > 32 ? ch.last_error.substring(0, 30) + '...' : ch.last_error)}</span>`
+          : '<span class="text-secondary font-xs">None</span>';
+
+        return `
+          <tr>
+            <td><b>${escapeHtml(ch.title)}</b></td>
+            <td><code>${ch.chat_id}</code></td>
+            <td>${linkHtml}</td>
+            <td>${botStatusHtml}</td>
+            <td>${errorHtml}</td>
+            <td><span class="badge ${ch.enabled ? 'badge-success' : 'badge-secondary'}">${ch.enabled ? 'Enabled' : 'Disabled'}</span></td>
+            <td class="font-sm">${formatDate(ch.last_bot_check)}</td>
+            <td>
+              <button class="btn btn-secondary btn-sm" onclick="testChannel(${ch.id})" title="Verify Bot Permissions">Verify</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteChannel(${ch.id})" title="Remove Channel">Remove</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
     }
 
     try {

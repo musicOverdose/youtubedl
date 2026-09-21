@@ -94,25 +94,33 @@ def build_must_join_keyboard(
 ) -> InlineKeyboardMarkup:
     """
     MUST-JOIN ENFORCEMENT UI:
-    Shows join links for required channels and authoritative Check Again button.
+    Shows one inline URL button per configured channel pointing to its public/invite URL.
+    Channels without a usable URL are handled explicitly without creating broken buttons.
+    Final callback button is strictly 'must_join:check'.
     """
     keyboard: List[List[InlineKeyboardButton]] = []
 
-    for idx, ch in enumerate(channels, 1):
-        # Determine join URL
-        url = ch.invite_url
-        if not url and ch.username:
-            url = f"https://t.me/{ch.username.lstrip('@')}"
+    for ch in channels:
+        url = None
+        if ch.invite_url and (ch.invite_url.strip().startswith("http://") or ch.invite_url.strip().startswith("https://")):
+            url = ch.invite_url.strip()
+        elif ch.username:
+            clean_username = ch.username.strip().lstrip("@")
+            if clean_username:
+                url = f"https://t.me/{clean_username}"
 
-        text = f"📢 Join {ch.title}"
         if url:
-            keyboard.append([InlineKeyboardButton(text=text, url=url)])
+            keyboard.append([InlineKeyboardButton(text=ch.title, url=url)])
         else:
-            keyboard.append([InlineKeyboardButton(text=f"📢 {ch.title} (ID: {ch.chat_id})", callback_data="none")])
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{ch.title} (No Link Configured)",
+                    callback_data="must_join:no_url",
+                )
+            ])
 
-    check_data = f"mj_chk:{resume_action}" if resume_action else "mj_chk"
     keyboard.append([
-        InlineKeyboardButton(text="✅ I've Joined — Check Again", callback_data=check_data)
+        InlineKeyboardButton(text="I Joined — Check Again", callback_data="must_join:check")
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

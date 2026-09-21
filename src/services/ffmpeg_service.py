@@ -230,3 +230,173 @@ class FFmpegService:
                 except Exception:
                     pass
             return False
+
+    @classmethod
+    async def extract_video_metadata(cls, file_path: str) -> Tuple[int, int, int]:
+        """
+        Runs ffprobe against the FINAL processed output file and extracts:
+        (duration, width, height).
+        All must be valid positive values.
+        Raises ValueError if ffprobe cannot determine valid positive metadata.
+        """
+        if not os.path.exists(file_path):
+            raise ValueError(f"Video file does not exist: {file_path}")
+
+        probe_data = await cls.probe_file(file_path)
+        streams = probe_data.get("streams", [])
+        v_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+        if not v_stream:
+            raise ValueError(f"No video stream found in final output file: {file_path}")
+
+        raw_width = v_stream.get("width")
+        raw_height = v_stream.get("height")
+        if raw_width is None or raw_height is None:
+            raise ValueError(f"Video dimensions missing in ffprobe for {file_path}")
+
+        try:
+            width = int(raw_width)
+            height = int(raw_height)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid video dimensions in {file_path}: width={raw_width}, height={raw_height}") from e
+
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Video dimensions must be positive integers: width={width}, height={height}")
+
+        # Duration can be in video stream duration, container format duration, or tags
+        raw_duration = v_stream.get("duration")
+        if raw_duration is None:
+            raw_duration = probe_data.get("format", {}).get("duration")
+
+        if raw_duration is None:
+            raise ValueError(f"Video duration missing in ffprobe for {file_path}")
+
+        try:
+            duration_float = float(raw_duration)
+            duration = int(round(duration_float))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid video duration in {file_path}: {raw_duration}") from e
+
+        if duration <= 0:
+            if duration_float > 0:
+                duration = 1
+            else:
+                raise ValueError(f"Video duration must be positive: {duration_float}")
+
+        return duration, width, height
+
+    @classmethod
+    async def generate_thumbnail(
+        cls,
+        video_path: str,
+        output_thumb_path: str,
+        duration: Optional[int] = None,
+    ) -> bool:
+        """
+        Generates a JPEG thumbnail from the final processed video.
+        Requirements:
+        - JPEG format
+        - Maximum 320x320
+        - Strictly below 200 KB
+        - Preserves display aspect ratio (using dar filter)
+        - No stretching/squeezing
+        - Chooses a sensible timestamp (avoiding frame 0 and black frames)
+        - If first candidate is black and video is long enough, tries another timestamp
+        - Resizes/recompresses as necessary to stay below the 200 KB limit
+        """
+        if not os.path.exists(video_path):
+            logger.warning(f"Cannot generate thumbnail, video path missing: {video_path}")
+            return False
+
+        dur = duration
+        if dur is None:
+            try:
+                dur, _, _ = await cls.extract_video_metadata(video_path)
+            except Exception:
+                dur = 1
+
+        initial_seek = min(1.0, float(dur) * 0.1) if dur > 2 else 0.0
+
+        scale_vf = "scale='if(gte(dar,1),320,-2)':'if(gte(dar,1),-2,320)',pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1"
+
+        async def _extract_frame(seek_t: float) -> bool:
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(seek_t),
+                "-i", video_path,
+                "-vframes", "1",
+                "-vf", scale_vf,
+                "-q:v", "2",
+                output_thumb_path,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                logger.debug("Thumbnail ffmpeg extraction at %ss failed: %s", seek_t, stderr.decode()[-300:])
+                return False
+            return os.path.exists(output_thumb_path) and os.path.getsize(output_thumb_path) > 0
+
+        ok = await _extract_frame(initial_seek)
+        if not ok and initial_seek > 0.0:
+            ok = await _extract_frame(0.0)
+
+        if not ok:
+            logger.warning("FFmpeg failed to extract thumbnail frame from %s", video_path)
+            return False
+
+        try:
+            from PIL import Image
+
+            def _inspect_and_optimize():
+                with Image.open(output_thumb_path) as img:
+                    img = img.convert("RGB")
+                    is_black = False
+                    grayscale = img.convert("L")
+                    extrema = grayscale.getextrema()
+                    if extrema and extrema[1] < 15:
+                        is_black = True
+                    return is_black, img.size
+
+            loop = asyncio.get_running_loop()
+            is_black, (w, h) = await loop.run_in_executor(None, _inspect_and_optimize)
+
+            if is_black and dur > 4:
+                alt_seek = min(3.0, float(dur) * 0.25)
+                logger.info("First thumbnail candidate at %ss is black/dark; trying %ss", initial_seek, alt_seek)
+                alt_ok = await _extract_frame(alt_seek)
+                if not alt_ok:
+                    await _extract_frame(initial_seek)
+
+            def _ensure_limits():
+                with Image.open(output_thumb_path) as img:
+                    img = img.convert("RGB")
+                    w, h = img.size
+                    modified = False
+                    if w > 320 or h > 320:
+                        img.thumbnail((320, 320), Image.Resampling.LANCZOS)
+                        modified = True
+
+                    max_bytes = 195 * 1024
+                    file_size = os.path.getsize(output_thumb_path)
+
+                    if modified or file_size > max_bytes:
+                        quality = 85
+                        img.save(output_thumb_path, "JPEG", quality=quality, optimize=True)
+                        file_size = os.path.getsize(output_thumb_path)
+                        while file_size > max_bytes and quality > 30:
+                            quality -= 15
+                            img.save(output_thumb_path, "JPEG", quality=quality, optimize=True)
+                            file_size = os.path.getsize(output_thumb_path)
+
+            await loop.run_in_executor(None, _ensure_limits)
+            return True
+
+        except Exception as e:
+            logger.warning("Error inspecting/optimizing thumbnail: %s", e)
+            if os.path.exists(output_thumb_path) and 0 < os.path.getsize(output_thumb_path) < 200 * 1024:
+                return True
+            return False
+

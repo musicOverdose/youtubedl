@@ -26,16 +26,7 @@ async def on_quality_selected(callback: CallbackQuery, bot: Bot):
         return
 
     async with AsyncSessionLocal() as session:
-        # Centralized Must-Join check before callback
-        is_auth, missing_channels = await MustJoinService.require_must_join(
-            bot, session, user_id, force_authoritative=True
-        )
-        if not is_auth:
-            kb = build_must_join_keyboard(missing_channels)
-            await callback.message.answer(
-                "🔒 <b>You must join our channel(s) to continue:</b>", reply_markup=kb
-            )
-            await callback.answer()
+        if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
     # Second step: switch to Codec Selection on the SAME message
@@ -55,15 +46,7 @@ async def on_back_to_quality(callback: CallbackQuery, bot: Bot):
     canonical_url = get_canonical_url(source_id)
 
     async with AsyncSessionLocal() as session:
-        is_auth, missing_channels = await MustJoinService.require_must_join(
-            bot, session, user_id, force_authoritative=True
-        )
-        if not is_auth:
-            kb = build_must_join_keyboard(missing_channels)
-            await callback.message.answer(
-                "🔒 <b>You must join our channel(s) to continue:</b>", reply_markup=kb
-            )
-            await callback.answer()
+        if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
     try:

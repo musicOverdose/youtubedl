@@ -1,6 +1,7 @@
 import html
 from datetime import datetime, timezone
-from aiogram import Router
+from typing import Optional
+from aiogram import Bot, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import AsyncSessionLocal
 from src.core.logger import setup_logger
 from src.models.user import User
+from src.services.must_join_service import MustJoinService
 from src.services.setting_service import DEFAULT_WELCOME_MESSAGE, SettingService
 
 logger = setup_logger("bot_base")
@@ -40,10 +42,12 @@ async def get_or_create_user(session: AsyncSession, msg_user) -> User:
 
 
 @base_router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, bot: Optional[Bot] = None):
     raw_name = message.from_user.first_name if (message.from_user and message.from_user.first_name) else "User"
     safe_name = html.escape(raw_name)
     template = DEFAULT_WELCOME_MESSAGE
+
+    active_bot = bot or getattr(message, "bot", None)
 
     try:
         async with AsyncSessionLocal() as session:
@@ -58,6 +62,13 @@ async def cmd_start(message: Message):
                         await session.rollback()
                     except Exception:
                         pass
+
+            # Centralized Must-Join Gate for /start
+            if active_bot is not None:
+                allowed = await MustJoinService.enforce_must_join_message(message, active_bot, session)
+                if not allowed:
+                    return
+
             try:
                 template = await SettingService.get_welcome_message(session)
             except Exception as e:

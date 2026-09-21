@@ -33,6 +33,10 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
   - Runs self-hosted **Telegram Local Bot API Server 10.3** by default, lifting Telegram's 50 MB cloud limit to **2000 MB (2 GB)** single-file uploads.
   - **Zero-Multipart Local Handoff**: Completed media in `/transfer/<job-id>/` is handed directly to the Local Bot API server via `file:///transfer/...` URI, avoiding HTTP multipart stream overhead and RAM spikes.
   - **Cloud Fallback Mode**: Gracefully supports standard Cloud Bot API (`https://api.telegram.org`) with strict 50 MB preflight guard.
+- 🎬 **Authoritative Video Delivery Metadata & Thumbnails**:
+  - Probes final processed output files with `ffprobe` to extract authoritative `duration`, `width`, and `height` before delivery (never relies on original YouTube estimates or Telegram client-side inference).
+  - Automatically generates aspect-ratio-preserving JPEG thumbnails ($\le 320\times 320$, strictly $< 200\text{ KB}$) from the final output video with luminance probing to avoid black title cards.
+  - Uploads with explicit metadata, `supports_streaming=True`, and attached thumbnail. Retains Local Bot API zero-multipart local file handoff (`file:///transfer/...`) seamlessly with multipart thumbnail attachment.
 - 🎯 **Quality-First Telegram UX**:
   - Dynamically detects actual available resolutions directly from YouTube streams (`2160p`, `1440p`, `1080p`, `720p`, `480p`, `360p`).
   - Previews send the video thumbnail with only the **Video Title** as caption.
@@ -47,8 +51,12 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
   - Persistent storage in a private Telegram channel. Cache hits bypass workers and queues entirely.
 - 🧹 **Zero Permanent Disk Waste**:
   - Temporary files are automatically purged after verified cache upload, failure, or cancellation.
-- 🛡️ **Authoritative Must-Join Channel Guard**:
-  - Optionally require users to join specific Telegram channels before granting access. Customizable template message with `{first_name}` and `{channel_list}` placeholders.
+- 🛡️ **Hardened Must-Join Channel Gate & Safe UX**:
+  - Universal gate protecting `/start`, YouTube URL submission, and all media interactions (quality, codec, audio, subtitle).
+  - Generates direct URL buttons for configured channels (`https://t.me/...` or invite links) and explicit fallback alerts for missing links.
+  - Secure fixed callback `must_join:check` ("I Joined — Check Again") backed by a server-side pending action store (user/chat bound, 15-minute TTL, single-use atomic consumption).
+  - Distinguishes user non-membership from bot permission/API errors (`CHANNEL_NOT_FOUND`, `BOT_INSUFFICIENT_PERMISSIONS`, `BOT_NOT_MEMBER`, `TELEGRAM_API_ERROR`).
+  - Customizable template message with `{first_name}` and `{channel_list}` placeholders with strict Telegram HTML parse-mode validation and escaping.
 - 🚦 **Persistent Queue & Concurrency Control**:
   - Redis-backed FIFO queue surviving container restarts.
   - Race-safe concurrency slot allocation via Redis Lua scripts.
@@ -69,9 +77,10 @@ Unlike conventional downloaders that consume gigabytes of server storage, this s
   - **Strict 5-step cache channel validation**: Probes channel eligibility via `getChat` and `getChatAdministrators` checking `can_post_messages` without intrusive `sendChatAction` calls.
   - **Service-reported telemetry**: Worker and Local Bot API report disk metrics into Redis; no cross-service storage volume mounts into Web Admin.
 - 🖥️ **Full Web Administration Panel**:
-  - Modern, responsive dashboard on host port `8087` (container port `8080`) protected by Argon2id authentication.
+  - Modern, responsive dark SaaS dashboard on host port `8087` (container port `8080`) protected by Argon2id authentication.
   - Interactive Telegram Configuration panel with live API testing, derived endpoints, and zero-downtime hot reloading.
-  - Editable `/start` welcome message with Telegram HTML validation and safe first name placeholder.
+  - Complete Must-Join channel management with live bot verification indicators, error details, and toggle controls.
+  - Editable `/start` welcome and Must-Join messages with full Telegram HTML validation and safe first name escaping.
 
 ---
 
@@ -368,7 +377,7 @@ Access the dashboard at `http://<your-server-ip>:8087`.
 
 ## 🧪 Testing
 
-The repository contains a comprehensive 53-test automated test suite:
+The repository contains a comprehensive 102-test automated test suite (96 passed, 6 PostgreSQL-backed skipped locally):
 
 ```bash
 # Run complete test suite:
@@ -376,6 +385,19 @@ pytest -v
 ```
 
 Tests cover:
+- **Video Delivery Metadata & Thumbnails**:
+  - `ffprobe` metadata extraction against final processed video files (`duration`, `width`, `height` in landscape, portrait, and square formats)
+  - Failure behavior on missing or unreadable files (raising `ValueError` cleanly without fabricated values)
+  - Aspect-ratio-preserving JPEG thumbnail generation bounded to $\le 320\times 320$ and $< 200\text{ KB}$
+  - Black title-card fallback with luminance probing
+  - Local Bot API mixed-mode delivery (zero-multipart local video handoff alongside multipart thumbnail attachment)
+  - Worker pipeline resilience ensuring video delivery even if thumbnail generation fails
+- **Hardened Must-Join Channel Gate & Security**:
+  - Gate coverage on `/start`, URL submission, quality/codec selection, audio extraction, and subtitle requests
+  - Channel error distinction (`NOT_MEMBER`, `CHANNEL_NOT_FOUND`, `BOT_INSUFFICIENT_PERMISSIONS`, `BOT_NOT_MEMBER`, `TELEGRAM_API_ERROR`)
+  - Inline keyboard generation with channel URLs and fixed `must_join:check` callback
+  - Server-side pending action store with user/chat binding, 15-minute TTL, and atomic one-time consumption
+  - Telegram HTML parse-mode validation and safe first name escaping on custom messages
 - **Telegram Dual-Mode & Zero-Multipart Transfer**:
   - Direct local handoff via `file:///transfer/...` URI in Local mode
   - Strict 50 MB preflight rejection and `FSInputFile` usage in Cloud mode

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+import html
 from aiogram import Bot, Router
+from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery
 from sqlalchemy import select, update
 from src.bot.keyboards import build_must_join_keyboard
@@ -16,15 +18,24 @@ logger = setup_logger("must_join_handler")
 must_join_router = Router()
 
 
-@must_join_router.callback_query(lambda c: c.data and c.data.startswith("mj_chk"))
+@must_join_router.callback_query(lambda c: c.data in ("must_join:no_url", "none"))
+async def on_no_url_clicked(callback: CallbackQuery):
+    await callback.answer(
+        "This channel does not have a public invite link configured. Please contact the administrator.",
+        show_alert=True,
+    )
+
+
+@must_join_router.callback_query(
+    lambda c: c.data and (
+        c.data == "must_join:check"
+        or c.data.startswith("must_join:check:")
+        or c.data.startswith("mj_chk")
+    )
+)
 async def on_must_join_check_again(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
-    chat_id = callback.message.chat.id
-    data = callback.data
-
-    resume_url = None
-    if ":" in data:
-        resume_url = data.split(":", 1)[1]
+    chat_id = callback.message.chat.id if callback.message else user_id
 
     async with AsyncSessionLocal() as session:
         # ALWAYS FRESH AUTHORITATIVE TELEGRAM API CHECK!
@@ -33,26 +44,30 @@ async def on_must_join_check_again(callback: CallbackQuery, bot: Bot):
         )
 
         if not is_auth:
-            kb = build_must_join_keyboard(missing_channels, resume_action=resume_url)
+            kb = build_must_join_keyboard(missing_channels)
             await callback.answer(
                 "❌ You still haven't joined all required channels. Please join them first!",
                 show_alert=True,
             )
-            try:
-                await callback.message.edit_reply_markup(reply_markup=kb)
-            except Exception:
-                pass
+            if callback.message:
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=kb)
+                except Exception:
+                    pass
             return
 
         # User is AUTHORIZED!
         await callback.answer("✅ Membership verified! Thank you.", show_alert=False)
-        try:
-            await callback.message.edit_text("✅ <b>Membership verified successfully!</b>")
-        except Exception:
-            pass
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    "✅ <b>Membership verified successfully!</b>",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
 
         # 1. CHECK FOR PENDING 'WAITING_FOR_AUTHORIZATION' DELIVERIES
-        # If user left during download but rejoined, deliver now from cache without re-download!
         stmt = (
             select(JobRequest, Job, CacheEntry)
             .join(Job, Job.id == JobRequest.job_id)
@@ -82,11 +97,25 @@ async def on_must_join_check_again(callback: CallbackQuery, bot: Bot):
                 await session.commit()
                 logger.info(f"Delivered previously pending file to rejoined user {user_id}")
 
-        if resume_url:
-            await callback.message.answer(
-                f"🔗 Resuming your request for:\n{resume_url}\nPlease send the link again or choose an option above."
-            )
-        else:
+        # 2. CHECK FOR SERVER-SIDE PENDING ACTION
+        pending = await MustJoinService.consume_pending_action(user_id=user_id, chat_id=chat_id)
+        if pending:
+            action_type = pending.get("action_type")
+            payload = pending.get("payload", {})
+            if action_type == "url":
+                url = payload.get("url")
+                source_id = payload.get("source_id")
+                if url and source_id:
+                    from src.bot.handlers.url_handler import process_youtube_url
+                    if callback.message:
+                        await callback.message.answer(
+                            f"🔗 Resuming your request for:\n<b>{html.escape(url)}</b>",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    await process_youtube_url(bot, chat_id, url, source_id)
+                    return
+
+        if callback.message:
             await callback.message.answer(
                 "🎉 You are all set! Send any YouTube link to start downloading."
             )

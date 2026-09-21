@@ -348,6 +348,42 @@ class JobProcessor:
                     if not process_ok or not os.path.exists(output_file):
                         raise RuntimeError("FFmpeg processing failed")
 
+                    # 1. Run ffprobe against FINAL output file
+                    # Must fail cleanly with clear error if metadata cannot be determined
+                    try:
+                        duration, width, height = await FFmpegService.extract_video_metadata(output_file)
+                        logger.info(
+                            "Extracted metadata for final video: duration=%ds, width=%d, height=%d",
+                            duration, width, height
+                        )
+                    except Exception as meta_err:
+                        logger.error("Failed to extract valid video metadata from final file: %s", meta_err)
+                        raise ValueError(f"Could not extract valid video metadata: {meta_err}") from meta_err
+
+                    # 2. Generate JPEG thumbnail from FINAL output video
+                    thumb_path = os.path.join(job_dir, "thumbnail.jpg")
+                    thumb_ok = False
+                    try:
+                        thumb_ok = await FFmpegService.generate_thumbnail(
+                            video_path=output_file,
+                            output_thumb_path=thumb_path,
+                            duration=duration,
+                        )
+                    except Exception as thumb_err:
+                        logger.warning("Thumbnail generation error: %s", thumb_err)
+                        thumb_ok = False
+
+                    extra_kwargs = {
+                        "supports_streaming": True,
+                        "duration": duration,
+                        "width": width,
+                        "height": height,
+                    }
+                    if thumb_ok and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                        extra_kwargs["thumbnail"] = FSInputFile(thumb_path)
+                    else:
+                        logger.warning("Sending video without thumbnail because thumbnail generation failed or returned empty")
+
                     job.status = JobStatus.UPLOADING.value
                     await session.commit()
                     await notifier.update("☁️", "Uploading", "Sending media to secure cache...", force=True)
@@ -362,7 +398,7 @@ class JobProcessor:
                         job_id=job_id,
                         job_title=job.title,
                         caption=caption_text,
-                        extra_kwargs={"supports_streaming": True},
+                        extra_kwargs=extra_kwargs,
                     )
 
                     cache_entry = await CacheService.save_cache_entry(

@@ -26,16 +26,7 @@ async def on_subtitle_menu(callback: CallbackQuery, bot: Bot):
     canonical_url = get_canonical_url(source_id)
 
     async with AsyncSessionLocal() as session:
-        # Must-Join check
-        is_auth, missing_channels = await MustJoinService.require_must_join(
-            bot, session, user_id, force_authoritative=True
-        )
-        if not is_auth:
-            kb = build_must_join_keyboard(missing_channels)
-            await callback.message.answer(
-                "🔒 <b>You must join our channel(s) to continue:</b>", reply_markup=kb
-            )
-            await callback.answer()
+        if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
     try:
@@ -80,15 +71,7 @@ async def on_subtitle_selected(callback: CallbackQuery, bot: Bot):
 
     async with AsyncSessionLocal() as session:
         # 1. MUST-JOIN AUTHORIZATION (AUTHORITATIVE)
-        is_auth, missing_channels = await MustJoinService.require_must_join(
-            bot, session, user_id, force_authoritative=True
-        )
-        if not is_auth:
-            kb = build_must_join_keyboard(missing_channels)
-            await callback.message.answer(
-                "🔒 <b>You must join our channel(s) to download:</b>", reply_markup=kb
-            )
-            await callback.answer()
+        if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
         if lang == "FA" and not AIService.is_configured():

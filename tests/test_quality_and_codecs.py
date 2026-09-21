@@ -1,3 +1,4 @@
+import os
 import pytest
 from src.services.ffmpeg_service import FFmpegService
 from src.services.ytdlp_service import YtDlpService
@@ -134,4 +135,157 @@ async def test_aspect_ratio_preservation_synthetic(tmp_path):
         assert abs(actual_dar - exp_dar) / exp_dar < 0.03, (
             f"DAR distorted for {name}: actual {actual_dar:.3f} vs expected {exp_dar:.3f}"
         )
+
+
+@pytest.mark.asyncio
+async def test_ffprobe_metadata_extraction_landscape_portrait_square(tmp_path):
+    """
+    Verifies that extract_video_metadata extracts exact positive duration, width,
+    and height across landscape, portrait, and square videos.
+    """
+    import subprocess
+
+    cases = [
+        ("landscape", 1920, 1080, 2),
+        ("portrait", 1080, 1920, 3),
+        ("square", 720, 720, 1),
+    ]
+
+    for name, w, h, dur in cases:
+        v_path = str(tmp_path / f"meta_{name}.mp4")
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", f"testsrc=size={w}x{h}:rate=25",
+                "-t", str(dur),
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                v_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        extracted_dur, extracted_w, extracted_h = await FFmpegService.extract_video_metadata(v_path)
+        assert extracted_w == w
+        assert extracted_h == h
+        assert extracted_dur == dur
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_generation_dar_bounds_and_size(tmp_path):
+    """
+    Verifies that generate_thumbnail:
+    - Creates valid JPEG
+    - Dimensions are <= 320x320
+    - File size is strictly < 200 KB
+    - Preserves display aspect ratio without stretching
+    Across landscape (16:9), portrait (9:16), and square (1:1).
+    """
+    import subprocess
+    from PIL import Image
+
+    cases = [
+        ("landscape", 1920, 1080, 16 / 9),
+        ("portrait", 1080, 1920, 9 / 16),
+        ("square", 1080, 1080, 1.0),
+    ]
+
+    for name, w, h, expected_dar in cases:
+        v_path = str(tmp_path / f"thumb_src_{name}.mp4")
+        t_path = str(tmp_path / f"thumb_{name}.jpg")
+
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", f"testsrc=size={w}x{h}:rate=25",
+                "-t", "2",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                v_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        ok = await FFmpegService.generate_thumbnail(
+            video_path=v_path,
+            output_thumb_path=t_path,
+            duration=2,
+        )
+        assert ok is True
+        assert os.path.exists(t_path)
+
+        file_size = os.path.getsize(t_path)
+        assert file_size < 200 * 1024, f"Thumbnail {name} size {file_size} exceeds 200 KB"
+
+        with Image.open(t_path) as img:
+            assert img.format == "JPEG"
+            tw, th = img.size
+            assert tw <= 320, f"Thumbnail width {tw} exceeds 320"
+            assert th <= 320, f"Thumbnail height {th} exceeds 320"
+
+            actual_dar = tw / th
+            assert abs(actual_dar - expected_dar) / expected_dar < 0.05, (
+                f"Thumbnail DAR distorted for {name}: {actual_dar:.3f} vs {expected_dar:.3f}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_black_frame_fallback(tmp_path):
+    """
+    Verifies that if the initial candidate frame is solid black, generate_thumbnail
+    detects it and seeks to an alternate timestamp to capture a content frame.
+    """
+    import subprocess
+    from PIL import Image
+
+    v_path = str(tmp_path / "black_intro.mp4")
+    t_path = str(tmp_path / "thumb_fallback.jpg")
+
+    # 1.5 seconds black, then 4.5 seconds testsrc (total 6 seconds)
+    filter_complex = "color=c=black:s=1920x1080:d=1.5[v0];testsrc=size=1920x1080:rate=25:d=4.5[v1];[v0][v1]concat=n=2:v=1:a=0[v]"
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            v_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    ok = await FFmpegService.generate_thumbnail(
+        video_path=v_path,
+        output_thumb_path=t_path,
+        duration=6,
+    )
+    assert ok is True
+
+    # The resulting thumbnail should NOT be solid black
+    with Image.open(t_path) as img:
+        grayscale = img.convert("L")
+        extrema = grayscale.getextrema()
+        assert extrema[1] > 50, f"Expected non-black thumbnail, but max luminance is {extrema[1]}"
+
+
+@pytest.mark.asyncio
+async def test_metadata_extraction_fails_on_missing_or_corrupt_file(tmp_path):
+    """
+    Verifies that extract_video_metadata raises ValueError cleanly when given
+    a non-existent or invalid video file.
+    """
+    with pytest.raises(ValueError, match="does not exist"):
+        await FFmpegService.extract_video_metadata(str(tmp_path / "nonexistent.mp4"))
+
+    corrupt_file = str(tmp_path / "corrupt.mp4")
+    with open(corrupt_file, "wb") as f:
+        f.write(b"not a video file")
+
+    with pytest.raises(ValueError, match="No video stream found"):
+        await FFmpegService.extract_video_metadata(corrupt_file)
+
 

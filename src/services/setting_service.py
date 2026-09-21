@@ -1461,6 +1461,13 @@ class SettingService:
         if not clean_msg:
             raise HTTPException(status_code=400, detail="Must-Join message cannot be empty.")
 
+        is_valid, err = validate_telegram_html(clean_msg)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid Telegram HTML formatting: {err}",
+            )
+
         own_session = session is None
         sess = session or AsyncSessionLocal()
         try:
