@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import html
 import json
+import re
 from typing import List, Optional, Tuple
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -88,11 +89,78 @@ class MustJoinService:
         return is_member
 
     @classmethod
+    def parse_exemptions(cls, raw_exemptions: str) -> Tuple[set[int], set[str]]:
+        """
+        Parses comma-, newline-, semicolon-, or whitespace-separated exemption entries into:
+        - exempt_user_ids: set of integer Telegram user IDs (canonical identity)
+        - exempt_usernames: set of lowercase usernames without leading '@'
+        """
+        exempt_ids: set[int] = set()
+        exempt_usernames: set[str] = set()
+
+        if not raw_exemptions:
+            return exempt_ids, exempt_usernames
+
+        tokens = re.split(r"[,\n;\s]+", raw_exemptions.strip())
+        for token in tokens:
+            token = token.strip()
+            if not token:
+                continue
+            if token.startswith("@"):
+                clean_name = token.lstrip("@").strip().lower()
+                if clean_name:
+                    exempt_usernames.add(clean_name)
+                continue
+
+            try:
+                user_id = int(token)
+                exempt_ids.add(user_id)
+            except ValueError:
+                clean_name = token.lower()
+                if clean_name:
+                    exempt_usernames.add(clean_name)
+
+        return exempt_ids, exempt_usernames
+
+    @classmethod
+    def is_user_exempt(
+        cls,
+        user_id: int,
+        username: Optional[str] = None,
+        exemptions_str: Optional[str] = None,
+    ) -> bool:
+        """
+        Checks if a user is exempt from Must-Join channel checks.
+        Canonical identity is numeric Telegram user_id.
+        Username is matched case-insensitively as a secondary convenience.
+        """
+        raw = exemptions_str if exemptions_str is not None else getattr(settings, "MUST_JOIN_EXEMPT_USERS", "")
+        if not raw:
+            return False
+
+        exempt_ids, exempt_usernames = cls.parse_exemptions(raw)
+
+        # 1. Canonical check: numeric user_id
+        if user_id in exempt_ids:
+            logger.info("User %d is exempt from Must-Join by user_id", user_id)
+            return True
+
+        # 2. Secondary convenience check: username
+        if username:
+            norm_username = username.lstrip("@").strip().lower()
+            if norm_username in exempt_usernames:
+                logger.info("User %d (@%s) is exempt from Must-Join by username", user_id, username)
+                return True
+
+        return False
+
+    @classmethod
     async def require_must_join(
         cls,
         bot: Bot,
         session: AsyncSession,
         user_id: int,
+        username: Optional[str] = None,
         force_authoritative: bool = True,
     ) -> Tuple[bool, List[RequiredChannel]]:
         """
@@ -101,6 +169,10 @@ class MustJoinService:
         Returns: (is_authorized, missing_channels)
         """
         if not settings.MUST_JOIN_ENABLED:
+            return True, []
+
+        # Check exemption whitelist before making any Telegram API calls
+        if cls.is_user_exempt(user_id, username):
             return True, []
 
         channels = await cls.get_enabled_channels(session)
@@ -235,10 +307,11 @@ class MustJoinService:
         If blocked, stores pending action server-side and sends Must-Join prompt with buttons.
         """
         user_id = message.from_user.id if message.from_user else message.chat.id
+        username = message.from_user.username if message.from_user else None
         chat_id = message.chat.id
 
         is_auth, missing_channels = await cls.require_must_join(
-            bot, session, user_id, force_authoritative=True
+            bot, session, user_id, username=username, force_authoritative=True
         )
         if is_auth:
             return True
@@ -279,10 +352,11 @@ class MustJoinService:
         If blocked, stores pending action server-side and informs user via alert or prompt.
         """
         user_id = callback.from_user.id
+        username = callback.from_user.username if callback.from_user else None
         chat_id = callback.message.chat.id if callback.message else user_id
 
         is_auth, missing_channels = await cls.require_must_join(
-            bot, session, user_id, force_authoritative=True
+            bot, session, user_id, username=username, force_authoritative=True
         )
         if is_auth:
             return True

@@ -16,7 +16,7 @@ class AISettingsRequest(BaseModel):
     provider: str
     base_url: str
     model: str
-    max_chunks: Optional[int] = 20
+    max_chunks: Optional[int] = 50
     api_key: Optional[str] = None  # If None, keep existing key
 
 

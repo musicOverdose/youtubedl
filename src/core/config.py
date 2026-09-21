@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     MP3_ENABLED: bool = Field(default=True)
     SUBTITLES_ENABLED: bool = Field(default=True)
     MUST_JOIN_ENABLED: bool = Field(default=False)
+    MUST_JOIN_EXEMPT_USERS: str = Field(default="")
 
     # AI Translation
     AI_ENABLED: bool = Field(default=False)
@@ -74,8 +75,9 @@ class Settings(BaseSettings):
     AI_API_KEY: Optional[str] = Field(default=None)
     AI_BASE_URL: str = Field(default="https://api.openai.com/v1")
     AI_MODEL: str = Field(default="gpt-4o-mini")
-    AI_MAX_CHUNKS: int = Field(default=20)
-    AI_CHUNK_SIZE: int = Field(default=25)
+    AI_MAX_CHUNKS: int = Field(default=50)
+    AI_CHUNK_SIZE: int = Field(default=10)
+    AI_TIMEOUT: float = Field(default=120.0)
 
     # yt-dlp & Network
     YTDLP_PROXY: Optional[str] = Field(default=None)

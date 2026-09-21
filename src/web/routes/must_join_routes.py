@@ -43,8 +43,12 @@ async def get_must_join_info(
     res = await session.execute(stmt)
     channels = res.scalars().all()
 
+    from src.services.setting_service import SettingService
+    exempt_users = await SettingService.get_must_join_exempt_users(session)
+
     return {
         "enabled": settings.MUST_JOIN_ENABLED,
+        "exempt_users": exempt_users,
         "channels": [
             {
                 "id": c.id,
@@ -238,3 +242,32 @@ async def reset_must_join_message(
         session, "SETTING_UPDATE", admin["sub"], "Reset Must-Join message template to default"
     )
     return {"status": "reset", "message": reset_msg}
+
+
+class ExemptUsersRequest(BaseModel):
+    exempt_users: str
+
+
+@router.get("/exempt-users")
+async def get_must_join_exempt_users(
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    from src.services.setting_service import SettingService
+    val = await SettingService.get_must_join_exempt_users(session)
+    return {"exempt_users": val}
+
+
+@router.post("/exempt-users")
+async def save_must_join_exempt_users(
+    req: ExemptUsersRequest,
+    session: AsyncSession = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
+):
+    from src.services.setting_service import SettingService
+    saved = await SettingService.save_must_join_exempt_users(req.exempt_users, session=session)
+    await AuditService.log_action(
+        session, "SETTING_UPDATE", admin["sub"], f"Updated Must-Join exempt users list: {saved[:100]}"
+    )
+    return {"status": "saved", "exempt_users": saved}
+

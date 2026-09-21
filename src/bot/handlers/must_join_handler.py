@@ -35,12 +35,13 @@ async def on_no_url_clicked(callback: CallbackQuery):
 )
 async def on_must_join_check_again(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
+    username = callback.from_user.username if callback.from_user else None
     chat_id = callback.message.chat.id if callback.message else user_id
 
     async with AsyncSessionLocal() as session:
         # ALWAYS FRESH AUTHORITATIVE TELEGRAM API CHECK!
         is_auth, missing_channels = await MustJoinService.require_must_join(
-            bot, session, user_id, force_authoritative=True
+            bot, session, user_id, username=username, force_authoritative=True
         )
 
         if not is_auth:

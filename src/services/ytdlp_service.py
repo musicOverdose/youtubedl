@@ -1,12 +1,63 @@
 import asyncio
 import os
+import random
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import yt_dlp
 from src.core.config import settings
 from src.core.logger import setup_logger
+from src.core.redis import get_redis_client
 
 logger = setup_logger("ytdlp_service")
+
+
+class YouTubeSubtitleRateLimitError(Exception):
+    """Raised when YouTube HTTP 429 rate limit persists across all retries."""
+    pass
+
+
+def is_http_429_error(exc: Exception) -> bool:
+    """Checks whether the exception is specifically an HTTP 429 Too Many Requests error."""
+    msg = str(exc).lower()
+    return "429" in msg and (
+        "too many requests" in msg
+        or "http error 429" in msg
+        or "http error: 429" in msg
+        or "status 429" in msg
+    )
+
+
+SUBTITLE_COOLDOWN_KEY = "ytdlp:subtitles:cooldown"
+_in_memory_subtitle_cooldown_until: float = 0.0
+
+
+async def get_subtitle_cooldown_remaining() -> float:
+    """Returns remaining seconds of global subtitle cooldown, or 0.0 if not active."""
+    global _in_memory_subtitle_cooldown_until
+    try:
+        r = get_redis_client()
+        ttl = await r.ttl(SUBTITLE_COOLDOWN_KEY)
+        if ttl and ttl > 0:
+            return float(ttl)
+    except Exception:
+        pass
+    now = time.monotonic()
+    rem = _in_memory_subtitle_cooldown_until - now
+    return max(0.0, rem)
+
+
+async def set_subtitle_cooldown(cooldown_seconds: int = 30) -> None:
+    """Sets a short global cooldown after encountering HTTP 429 to protect the IP."""
+    global _in_memory_subtitle_cooldown_until
+    try:
+        r = get_redis_client()
+        await r.set(SUBTITLE_COOLDOWN_KEY, "1", ex=cooldown_seconds)
+    except Exception:
+        pass
+    now = time.monotonic()
+    _in_memory_subtitle_cooldown_until = max(_in_memory_subtitle_cooldown_until, now + cooldown_seconds)
+
 
 # Standard YouTube URL regex patterns
 YOUTUBE_URL_REGEX = re.compile(
@@ -148,3 +199,94 @@ class YtDlpService:
         No fallback to lower/higher resolutions.
         """
         return f"bestvideo[height={target_height}]+bestaudio/best[height={target_height}]"
+
+    @classmethod
+    async def download_subtitles(
+        cls,
+        url: str,
+        output_template: str,
+        cookies_file: Optional[str] = None,
+        on_retry: Optional[Callable[[int, float, Exception], Any]] = None,
+    ) -> None:
+        """
+        Downloads English subtitles with conservative backoff specifically for HTTP 429:
+        - Attempt 1: wait ~10s (+jitter)
+        - Attempt 2: wait ~30s (+jitter)
+        - Attempt 3: wait ~60s (+jitter)
+        Only retries on HTTP 429. Unrelated failures raise immediately.
+        Respects global subtitle cooldown across concurrent worker jobs.
+        """
+        # 1. Check & respect global subtitle cooldown if another job recently hit 429
+        cd_rem = await get_subtitle_cooldown_remaining()
+        if cd_rem > 0:
+            logger.info("Global subtitle cooldown active (%0.1fs remaining), waiting before attempt...", cd_rem)
+            await asyncio.sleep(cd_rem)
+
+        backoff_delays = [10.0, 30.0, 60.0]
+        max_retries = len(backoff_delays)
+
+        opts = cls.get_base_opts(cookies_file)
+        opts.update({
+            "outtmpl": output_template,
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": ["en.*", "en"],
+            "subtitlesformat": "srt/vtt/best",
+        })
+
+        loop = asyncio.get_running_loop()
+
+        for attempt in range(max_retries + 1):
+            try:
+                def _dl():
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        ydl.download([url])
+
+                await loop.run_in_executor(None, _dl)
+                logger.info("Subtitles downloaded successfully for %s on attempt %d", url, attempt + 1)
+                return
+            except Exception as e:
+                # ONLY retry if error is specifically HTTP 429
+                if not is_http_429_error(e):
+                    logger.error("Subtitle download failed with non-429 error: %s", e)
+                    raise
+
+                logger.warning(
+                    "YouTube subtitle download encountered HTTP 429 on attempt %d/%d: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    e,
+                )
+
+                # Set global cooldown so concurrent jobs/workers back off this IP
+                await set_subtitle_cooldown(cooldown_seconds=30)
+
+                if attempt >= max_retries:
+                    raise YouTubeSubtitleRateLimitError(
+                        "YouTube rate-limited subtitle extraction (HTTP 429: Too Many Requests) across all retries. "
+                        "Please try again later or configure YouTube Cookies or a Proxy in the Admin Panel."
+                    ) from e
+
+                base_delay = backoff_delays[attempt]
+                jitter = random.uniform(0.5, 3.0)
+                wait_time = base_delay + jitter
+
+                logger.info(
+                    "Waiting %0.1fs (base=%0.1fs, jitter=%0.1fs) before subtitle retry %d/%d",
+                    wait_time,
+                    base_delay,
+                    jitter,
+                    attempt + 1,
+                    max_retries,
+                )
+
+                if on_retry:
+                    try:
+                        res = on_retry(attempt + 1, wait_time, e)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as cb_err:
+                        logger.warning("on_retry callback failed: %s", cb_err)
+
+                await asyncio.sleep(wait_time)

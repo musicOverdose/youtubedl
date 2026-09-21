@@ -26,7 +26,7 @@ from src.services.must_join_service import MustJoinService
 from src.services.queue_service import QueueService
 from src.services.setting_service import SettingService
 from src.services.system_service import SystemService
-from src.services.ytdlp_service import YtDlpService
+from src.services.ytdlp_service import YtDlpService, YouTubeSubtitleRateLimitError
 from src.worker.notifier import StatusNotifier
 from src.worker.telegram_factory import TelegramClientFactory
 
@@ -196,39 +196,38 @@ class JobProcessor:
         api_mode = "local"
         cache_channel_id = None
         config_version = "1"
-        try:
-            async with AsyncSessionLocal() as cfg_session:
-                stmt = select(Setting).where(Setting.status == "ACTIVE")
-                res = await cfg_session.execute(stmt)
-                active_map = {s.key: s.value for s in res.scalars().all()}
-                api_mode = active_map.get("telegram_api_mode") or "local"
+
+        async with AsyncSessionLocal() as session:
+            # 1. Synchronize public runtime settings (cookies, proxy, AI limits, Must-Join) from PostgreSQL
+            try:
+                active_map = await SettingService.load_public_settings_to_runtime(session)
+                api_mode = active_map.get("telegram_api_mode") or getattr(settings, "TELEGRAM_API_MODE", "local")
                 chan_str = active_map.get("telegram_cache_channel_id")
                 if chan_str:
                     cache_channel_id = int(chan_str)
                 config_version = active_map.get("telegram_config_version") or "1"
-        except Exception as e:
-            logger.warning("Could not read authoritative settings from PostgreSQL: %s. Falling back to Redis mirror.", e)
-            try:
-                r = get_redis_client()
-                m = await r.get("telegram:active:mode")
-                if m:
-                    api_mode = m.decode("utf-8") if isinstance(m, bytes) else str(m)
-                c = await r.get("telegram:active:cache_channel_id")
-                if c:
-                    cache_channel_id = int(c.decode("utf-8") if isinstance(c, bytes) else str(c))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Could not sync authoritative public settings from PostgreSQL: %s. Falling back to Redis mirror.", e)
+                try:
+                    r = get_redis_client()
+                    m = await r.get("telegram:active:mode")
+                    if m:
+                        api_mode = m.decode("utf-8") if isinstance(m, bytes) else str(m)
+                    c = await r.get("telegram:active:cache_channel_id")
+                    if c:
+                        cache_channel_id = int(c.decode("utf-8") if isinstance(c, bytes) else str(c))
+                except Exception:
+                    pass
 
-        bot = None
-        own_bot = False
-        if self.bot is not None:
-            bot = self.bot
-        else:
-            bot, api_mode = await TelegramClientFactory.get_client(mode=api_mode)
-            own_bot = True
+            bot = None
+            own_bot = False
+            if self.bot is not None:
+                bot = self.bot
+            else:
+                bot, api_mode = await TelegramClientFactory.get_client(mode=api_mode)
+                own_bot = True
 
-        async with AsyncSessionLocal() as session:
-            # 1. Fetch Job and active requests
+            # 2. Fetch Job and active requests
             stmt = select(Job).where(Job.id == job_id)
             res = await session.execute(stmt)
             job = res.scalar_one_or_none()
@@ -516,21 +515,23 @@ class JobProcessor:
                     await notifier.update("⬇️", "Downloading", "Extracting English subtitles...", force=True)
 
                     sub_template = os.path.join(job_dir, "subs.%(ext)s")
-                    ydl_opts = YtDlpService.get_base_opts()
-                    ydl_opts.update({
-                        "outtmpl": sub_template,
-                        "skip_download": True,
-                        "writesubtitles": True,
-                        "writeautomaticsub": True,
-                        "subtitleslangs": ["en.*", "en"],
-                        "subtitlesformat": "srt/vtt/best",
-                    })
 
-                    loop = asyncio.get_running_loop()
-                    def _dl_subs():
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            ydl.download([job.canonical_url])
-                    await loop.run_in_executor(None, _dl_subs)
+                    async def _on_sub_retry(attempt_num: int, wait_sec: float, err: Exception):
+                        await notifier.update(
+                            "⏳",
+                            "Rate Limited",
+                            f"YouTube rate-limited subtitles (429). Retrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
+                            force=True,
+                        )
+
+                    try:
+                        await YtDlpService.download_subtitles(
+                            url=job.canonical_url,
+                            output_template=sub_template,
+                            on_retry=_on_sub_retry,
+                        )
+                    except YouTubeSubtitleRateLimitError as rl_err:
+                        raise RuntimeError(str(rl_err)) from rl_err
 
                     sub_files = glob.glob(os.path.join(job_dir, "subs*.*"))
                     if not sub_files:
@@ -548,19 +549,14 @@ class JobProcessor:
                     target_lang = job.subtitle_lang or "EN"
 
                     if target_lang == "FA":
-                        # Sync non-secret runtime settings (e.g. AI provider, model, base url, max chunks) without decrypting secrets
-                        try:
-                            await SettingService.load_public_settings_to_runtime(session)
-                        except Exception as s_err:
-                            logger.warning("Could not sync public settings before translation: %s", s_err)
-
                         # Check chunk limit before starting AI translation
-                        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 25)
+                        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 10)
                         total_chunks = (len(parsed_segs) + chunk_size - 1) // chunk_size
-                        max_chunks = getattr(settings, "AI_MAX_CHUNKS", 20)
+                        max_chunks = getattr(settings, "AI_MAX_CHUNKS", 50)
                         if max_chunks and max_chunks > 0 and total_chunks > max_chunks:
+                            max_cues = max_chunks * chunk_size
                             raise RuntimeError(
-                                f"Video subtitle size is too large for AI translation ({total_chunks} chunks exceeds maximum allowed {max_chunks} chunks). Please download English subtitles instead."
+                                f"Video subtitle size is too large for AI translation ({total_chunks} chunks / {len(parsed_segs)} cues exceeds maximum allowed limit of {max_chunks} chunks / {max_cues} cues). Please download English subtitles instead."
                             )
 
                         job.status = JobStatus.PROCESSING.value

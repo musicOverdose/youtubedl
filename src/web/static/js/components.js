@@ -222,6 +222,7 @@ function setupInputAlertClearers() {
     { containerId: 'sec-youtube', alertId: 'youtube-alert' },
     { containerId: 'sec-cookies', alertId: 'cookies-alert' },
     { containerId: 'sec-must-join', alertId: 'must-join-alert' },
+    { containerId: 'sec-must-join', alertId: 'mj-exempt-alert' },
     { containerId: 'modal-add-channel', alertId: 'add-channel-alert' },
     { containerId: 'login-form', alertId: 'login-error' },
   ];

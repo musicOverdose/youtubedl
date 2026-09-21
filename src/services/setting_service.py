@@ -73,7 +73,9 @@ SETTING_AI_CHUNK_SIZE = "ai_chunk_size"
 
 # Additional Audited Runtime Setting Keys
 SETTING_YTDLP_COOKIES_ENABLED = "ytdlp_cookies_enabled"
+SETTING_YTDLP_PROXY = "ytdlp_proxy"
 SETTING_MUST_JOIN_ENABLED = "must_join_enabled"
+SETTING_MUST_JOIN_EXEMPT_USERS = "must_join_exempt_users"
 SETTING_MAX_ACTIVE_JOBS = "max_active_jobs"
 
 APP_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
@@ -97,7 +99,9 @@ APP_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
     SETTING_AI_MAX_CHUNKS: {"attr": "AI_MAX_CHUNKS", "type": int, "encrypted": False, "desc": "Max chunks for AI subtitle translation"},
     SETTING_AI_CHUNK_SIZE: {"attr": "AI_CHUNK_SIZE", "type": int, "encrypted": False, "desc": "Subtitle segment chunk size for AI translation"},
     SETTING_YTDLP_COOKIES_ENABLED: {"attr": "YTDLP_COOKIES_ENABLED", "type": bool, "encrypted": False, "desc": "YouTube cookies enabled"},
+    SETTING_YTDLP_PROXY: {"attr": "YTDLP_PROXY", "type": str, "encrypted": False, "desc": "Proxy URL for yt-dlp"},
     SETTING_MUST_JOIN_ENABLED: {"attr": "MUST_JOIN_ENABLED", "type": bool, "encrypted": False, "desc": "Must-join channels enforcement enabled"},
+    SETTING_MUST_JOIN_EXEMPT_USERS: {"attr": "MUST_JOIN_EXEMPT_USERS", "type": str, "encrypted": False, "desc": "Must-join exempt user IDs and usernames"},
     SETTING_MAX_ACTIVE_JOBS: {"attr": "MAX_ACTIVE_JOBS", "type": int, "encrypted": False, "desc": "Max active worker processing jobs"},
 }
 
@@ -1522,6 +1526,29 @@ class SettingService:
                 await sess.close()
 
     @classmethod
+    async def get_must_join_exempt_users(cls, session: Optional[AsyncSession] = None) -> str:
+        """Get the active Must-Join exempt user IDs and usernames list."""
+        val = await cls.get_active_setting(SETTING_MUST_JOIN_EXEMPT_USERS, session)
+        return val if val else getattr(settings, "MUST_JOIN_EXEMPT_USERS", "")
+
+    @classmethod
+    async def save_must_join_exempt_users(
+        cls,
+        exempt_users: str,
+        session: Optional[AsyncSession] = None,
+    ) -> str:
+        """Save Must-Join exempt user IDs and usernames list."""
+        clean_val = (exempt_users or "").strip()
+        await cls.save_single_setting(
+            SETTING_MUST_JOIN_EXEMPT_USERS,
+            clean_val,
+            description="Must-Join exempt user IDs and usernames",
+            session=session,
+        )
+        settings.MUST_JOIN_EXEMPT_USERS = clean_val
+        return clean_val
+
+    @classmethod
     async def get_welcome_message(cls, session: Optional[AsyncSession] = None) -> str:
         """Get the active welcome message template for /start."""
         custom_msg = await cls.get_active_setting(SETTING_WELCOME_MSG, session)
@@ -1692,7 +1719,7 @@ class SettingService:
         base_url = str(all_active.get(SETTING_AI_BASE_URL, settings.AI_BASE_URL))
         model = str(all_active.get(SETTING_AI_MODEL, settings.AI_MODEL))
         max_chunks = _cast_setting_value(
-            all_active.get(SETTING_AI_MAX_CHUNKS, getattr(settings, "AI_MAX_CHUNKS", 20)), int
+            all_active.get(SETTING_AI_MAX_CHUNKS, getattr(settings, "AI_MAX_CHUNKS", 50)), int
         )
         api_key = all_active.get(SETTING_AI_API_KEY, settings.AI_API_KEY) or ""
 
@@ -1725,7 +1752,7 @@ class SettingService:
             provider = str(req.get("provider", "openai")).strip()
             base_url = str(req.get("base_url", "https://api.openai.com/v1")).rstrip("/")
             model = str(req.get("model", "gpt-4o-mini")).strip()
-            max_chunks = int(req.get("max_chunks", getattr(settings, "AI_MAX_CHUNKS", 20)))
+            max_chunks = int(req.get("max_chunks", getattr(settings, "AI_MAX_CHUNKS", 50)))
             api_key = req.get("api_key")
 
             # Update in-memory
@@ -1863,20 +1890,23 @@ class SettingService:
                 await sess.close()
 
     @classmethod
-    async def load_public_settings_to_runtime(cls, session: Optional[AsyncSession] = None) -> None:
+    async def load_public_settings_to_runtime(cls, session: Optional[AsyncSession] = None) -> Dict[str, str]:
         """
         Load non-secret ACTIVE application settings from PostgreSQL into process settings.
         STRICT SECURITY BOUNDARY:
         Safe for Bot and Worker. Never attempts master key retrieval or credential decryption.
+        Returns active_map of key->value for caller convenience.
         """
         own_session = session is None
         sess = session or AsyncSessionLocal()
+        active_map: Dict[str, str] = {}
         try:
             stmt = select(Setting).where(Setting.status == "ACTIVE")
             res = await sess.execute(stmt)
             items = res.scalars().all()
 
             for item in items:
+                active_map[item.key] = item.value
                 if item.key not in APP_SETTINGS_SPEC:
                     continue
                 spec = APP_SETTINGS_SPEC[item.key]
@@ -1891,8 +1921,10 @@ class SettingService:
                     logger.warning("Could not cast public setting %s (%s): %s", item.key, item.value, e)
 
             logger.info("Loaded non-secret application settings from PostgreSQL into runtime config.")
+            return active_map
         except Exception as e:
             logger.warning("Could not load public application settings from PostgreSQL: %s. Using in-memory defaults.", e)
+            return active_map
         finally:
             if own_session:
                 await sess.close()

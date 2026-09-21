@@ -524,6 +524,27 @@
             <button class="btn btn-secondary" onclick="resetMustJoinMessage()">Reset to Default</button>
           </div>
         </div>
+
+        <!-- Must-Join User Exemption Whitelist -->
+        <div class="card max-w-md">
+          <div class="card__header">
+            <div class="card__title">Exempt Users (Whitelist)</div>
+          </div>
+          <div class="alert-strip hidden mb-3" id="mj-exempt-alert" role="alert"></div>
+          <p class="font-sm text-secondary mb-3">
+            Users exempt from Must-Join channel checks. Enter numeric Telegram User IDs (canonical identity) or @usernames, separated by commas or newlines.
+          </p>
+          <div class="form-group">
+            <label for="mj-exempt-users-area">Exempt User IDs / Usernames:</label>
+            <textarea id="mj-exempt-users-area" placeholder="e.g. 123456789, @owner, 987654321" rows="4"></textarea>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-primary" onclick="saveMustJoinExemptUsers()">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Exemptions
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- ================================================
@@ -865,8 +886,8 @@
             </div>
             <div class="form-group">
               <label for="ai-max-chunks">Max Translation Chunks:</label>
-              <input type="number" id="ai-max-chunks" min="0" max="1000" value="20">
-              <div class="field-hint">Limit subtitle size (25 segments/chunk, ~1 min/chunk). E.g., 20 chunks ≈ 20 min video. Set to 0 for unlimited.</div>
+              <input type="number" id="ai-max-chunks" min="0" max="1000" value="50">
+              <div class="field-hint">Limit subtitle size (10 cues/chunk). 50 chunks × 10 cues = 500 subtitle cues maximum. Set to 0 for unlimited.</div>
             </div>
             <div class="form-group">
               <label for="ai-api-key-input">API Key (leave empty to keep existing):</label>

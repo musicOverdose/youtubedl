@@ -140,22 +140,25 @@ class AIService:
             return False, None, "English subtitle content is empty or invalid"
 
         # Chunk segments to prevent timeout/context window overflow
-        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 25)
+        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 10)
         translated_segments: List[SubtitleSegment] = []
 
         total_chunks = (len(segments) + chunk_size - 1) // chunk_size
-        effective_max_chunks = max_chunks if max_chunks is not None else getattr(settings, "AI_MAX_CHUNKS", 20)
+        effective_max_chunks = max_chunks if max_chunks is not None else getattr(settings, "AI_MAX_CHUNKS", 50)
 
         if effective_max_chunks and effective_max_chunks > 0 and total_chunks > effective_max_chunks:
+            max_cues = effective_max_chunks * chunk_size
             logger.warning(
-                "Subtitle translation rejected: %d chunks exceeds max allowed %d chunks",
+                "Subtitle translation rejected: %d chunks (%d cues) exceeds max allowed %d chunks (%d cues)",
                 total_chunks,
+                len(segments),
                 effective_max_chunks,
+                max_cues,
             )
             return (
                 False,
                 None,
-                f"Video subtitle size is too large for AI translation ({total_chunks} chunks exceeds maximum allowed {effective_max_chunks} chunks). Please download English subtitles instead.",
+                f"Video subtitle size is too large for AI translation ({total_chunks} chunks / {len(segments)} cues exceeds maximum allowed limit of {effective_max_chunks} chunks / {max_cues} cues). Please download English subtitles instead.",
             )
 
         system_prompt = (
@@ -188,6 +191,9 @@ class AIService:
         }
         model_name = (settings.AI_MODEL or "gpt-4o-mini").strip()
 
+        timeout_secs = float(getattr(settings, "AI_TIMEOUT", 120.0))
+        req_timeout = httpx.Timeout(connect=20.0, read=timeout_secs, write=20.0, pool=20.0)
+
         for chunk_idx, i in enumerate(range(0, len(segments), chunk_size), 1):
             chunk = segments[i : i + chunk_size]
             chunk_srt = "\n\n".join(seg.to_srt().strip() for seg in chunk)
@@ -209,7 +215,7 @@ class AIService:
             last_error = ""
             for attempt in range(3):
                 try:
-                    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    async with httpx.AsyncClient(timeout=req_timeout, follow_redirects=True) as client:
                         resp = await client.post(url, headers=headers, json=payload)
                         if resp.status_code == 200:
                             data = resp.json()
@@ -246,8 +252,36 @@ class AIService:
                                 total_chunks,
                                 attempt + 1,
                             )
+                except httpx.ReadTimeout:
+                    last_error = f"ReadTimeout (provider read timed out after {int(timeout_secs)}s on chunk {chunk_idx}/{total_chunks})"
+                    logger.error(
+                        "AI translation read timeout after %0.1fs on chunk %d/%d (attempt %d/3)",
+                        timeout_secs,
+                        chunk_idx,
+                        total_chunks,
+                        attempt + 1,
+                    )
+                except httpx.ConnectTimeout:
+                    last_error = f"ConnectTimeout (failed to connect to provider within 20s on chunk {chunk_idx}/{total_chunks})"
+                    logger.error(
+                        "AI translation connect timeout on chunk %d/%d (attempt %d/3)",
+                        chunk_idx,
+                        total_chunks,
+                        attempt + 1,
+                    )
+                except httpx.TimeoutException as te:
+                    timeout_type = type(te).__name__
+                    last_error = f"{timeout_type} (provider request timed out after {int(timeout_secs)}s on chunk {chunk_idx}/{total_chunks})"
+                    logger.error(
+                        "AI translation timeout (%s) on chunk %d/%d (attempt %d/3)",
+                        timeout_type,
+                        chunk_idx,
+                        total_chunks,
+                        attempt + 1,
+                    )
                 except Exception as e:
-                    last_error = f"{type(e).__name__}: {str(e)[:300]}"
+                    err_desc = str(e).strip() or "no error message"
+                    last_error = f"{type(e).__name__}: {err_desc[:300]}"
                     logger.error(
                         "AI translation request failed with %s: %s (chunk %d/%d, attempt %d/3)",
                         type(e).__name__,

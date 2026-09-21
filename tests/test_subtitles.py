@@ -142,6 +142,7 @@ async def test_subtitle_translation_chunking_and_retry(monkeypatch):
     monkeypatch.setattr(settings, "AI_BASE_URL", "https://api.example.com/v1")
     monkeypatch.setattr(settings, "AI_MODEL", "test-model")
     monkeypatch.setattr(settings, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "AI_CHUNK_SIZE", 25)
 
     # Generate 30 segments (which must be split into 2 chunks: 25 and 5)
     segments_srt = []
@@ -241,7 +242,7 @@ async def test_ai_translation_max_chunks_limit(monkeypatch):
     assert ok is False
     assert result is None
     assert "Video subtitle size is too large for AI translation" in err
-    assert "3 chunks exceeds maximum allowed 2 chunks" in err
+    assert "3 chunks / 60 cues exceeds maximum allowed limit of 2 chunks / 50 cues" in err
     assert "Please download English subtitles instead." in err
 
 

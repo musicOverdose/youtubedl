@@ -369,6 +369,11 @@ async function loadMustJoin() {
       const area = document.getElementById('mj-custom-msg-area');
       if (area && msgData.message) area.value = msgData.message;
     } catch (e) {}
+
+    if (data.exempt_users !== undefined) {
+      const exemptArea = document.getElementById('mj-exempt-users-area');
+      if (exemptArea) exemptArea.value = data.exempt_users;
+    }
   } catch (err) {}
 }
 
@@ -507,7 +512,7 @@ async function loadAI() {
     document.getElementById('ai-base-url').value         = data.base_url;
     document.getElementById('ai-model').value            = data.model;
     const maxChunksEl = document.getElementById('ai-max-chunks');
-    if (maxChunksEl) maxChunksEl.value                   = data.max_chunks ?? 20;
+    if (maxChunksEl) maxChunksEl.value                   = data.max_chunks ?? 50;
     const aiKeyInput = document.getElementById('ai-api-key-input');
     const aiKeyDisplay = document.getElementById('ai-api-key-display');
     if (data.api_key_masked) {
@@ -528,7 +533,7 @@ async function saveAISettings(e) {
   const baseUrl  = document.getElementById('ai-base-url').value;
   const model    = document.getElementById('ai-model').value;
   const maxChunksEl = document.getElementById('ai-max-chunks');
-  const maxChunks = maxChunksEl ? (parseInt(maxChunksEl.value, 10) || 0) : 20;
+  const maxChunks = maxChunksEl ? (parseInt(maxChunksEl.value, 10) || 0) : 50;
   const key      = document.getElementById('ai-api-key-input').value;
 
   try {
@@ -923,6 +928,20 @@ async function resetMustJoinMessage() {
   } catch (err) {
     showAlert('must-join-alert', `Failed to reset: ${err.message}`, 'error');
     toastError(`Failed to reset: ${err.message}`, 'Reset Error');
+  }
+}
+
+async function saveMustJoinExemptUsers() {
+  hideAlert('mj-exempt-alert');
+  const area = document.getElementById('mj-exempt-users-area');
+  const val = area ? area.value : '';
+  try {
+    await API.post('/api/must-join/exempt-users', { exempt_users: val });
+    showAlert('mj-exempt-alert', 'Must-Join exempt users saved', 'success');
+    toastSuccess('Exempt users updated', 'Saved');
+  } catch (err) {
+    showAlert('mj-exempt-alert', `Failed to save: ${err.message}`, 'error');
+    toastError(`Failed to save: ${err.message}`, 'Save Error');
   }
 }
 
