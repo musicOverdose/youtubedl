@@ -49,6 +49,8 @@ SETTING_MUST_JOIN_MSG = "must_join_message"
 SETTING_WELCOME_MSG = "welcome_message"
 
 # Application Setting Keys
+SETTING_MAX_VIDEO_FILE_SIZE_MB_LOCAL = "max_video_file_size_mb_local"
+SETTING_MAX_VIDEO_FILE_SIZE_MB_CLOUD = "max_video_file_size_mb_cloud"
 SETTING_MAX_VIDEO_DURATION_SECONDS = "max_video_duration_seconds"
 SETTING_ALLOW_UNKNOWN_DURATION = "allow_unknown_duration"
 SETTING_CACHE_HIT_BYPASSES_DURATION_LIMIT = "cache_hit_bypasses_duration_limit"
@@ -79,6 +81,8 @@ SETTING_MUST_JOIN_EXEMPT_USERS = "must_join_exempt_users"
 SETTING_MAX_ACTIVE_JOBS = "max_active_jobs"
 
 APP_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
+    SETTING_MAX_VIDEO_FILE_SIZE_MB_LOCAL: {"attr": "MAX_VIDEO_FILE_SIZE_MB_LOCAL", "type": int, "encrypted": False, "desc": "Max video file size (MB) for Local Bot API"},
+    SETTING_MAX_VIDEO_FILE_SIZE_MB_CLOUD: {"attr": "MAX_VIDEO_FILE_SIZE_MB_CLOUD", "type": int, "encrypted": False, "desc": "Max video file size (MB) for Cloud Bot API"},
     SETTING_MAX_VIDEO_DURATION_SECONDS: {"attr": "MAX_VIDEO_DURATION_SECONDS", "type": int, "encrypted": False, "desc": "Max video duration in seconds"},
     SETTING_ALLOW_UNKNOWN_DURATION: {"attr": "ALLOW_UNKNOWN_DURATION", "type": bool, "encrypted": False, "desc": "Allow unknown video duration"},
     SETTING_CACHE_HIT_BYPASSES_DURATION_LIMIT: {"attr": "CACHE_HIT_BYPASSES_DURATION_LIMIT", "type": bool, "encrypted": False, "desc": "Cache hit bypasses duration limit"},
@@ -385,6 +389,36 @@ class SettingService:
         if not base or "api.telegram.org" in base:
             return "http://telegram-bot-api:8081"
         return base
+
+    @classmethod
+    def get_max_video_file_size_mb(cls, api_mode: str) -> int:
+        """Returns safe maximum video file size limit in MB for the given API mode."""
+        if api_mode == "local":
+            return getattr(settings, "MAX_VIDEO_FILE_SIZE_MB_LOCAL", 1900)
+        return getattr(settings, "MAX_VIDEO_FILE_SIZE_MB_CLOUD", 48)
+
+    @classmethod
+    async def get_active_api_mode(cls, session: Optional[AsyncSession] = None) -> str:
+        """Resolves current active Telegram API mode ('local' or 'cloud')."""
+        try:
+            r = get_redis_client()
+            cached = await r.get("telegram:active:mode")
+            if cached:
+                return cached.decode("utf-8") if isinstance(cached, bytes) else str(cached)
+        except Exception:
+            pass
+
+        if session:
+            try:
+                stmt = select(Setting.value).where(Setting.key == SETTING_API_MODE, Setting.status == "ACTIVE")
+                res = await session.execute(stmt)
+                val = res.scalar_one_or_none()
+                if val:
+                    return str(val)
+            except Exception:
+                pass
+
+        return getattr(settings, "TELEGRAM_API_MODE", "local")
 
     # --------------------------------------------------------------------------
     # Database Settings Retrieval

@@ -28,17 +28,6 @@ async def process_youtube_url(bot: Bot, chat_id: int, canonical_url: str, source
             pass
         return
 
-    # Duration validation
-    is_valid, duration_secs, err_msg = YtDlpService.validate_duration(
-        info, settings.MAX_VIDEO_DURATION_SECONDS, settings.ALLOW_UNKNOWN_DURATION
-    )
-    if not is_valid:
-        try:
-            await status_msg.edit_text(err_msg or "❌ This video exceeds the maximum duration limit.")
-        except Exception:
-            pass
-        return
-
     # Usable resolutions
     available_heights = YtDlpService.get_available_resolutions(info)
     title = info.get("title", "YouTube Video")

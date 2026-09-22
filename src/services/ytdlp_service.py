@@ -329,6 +329,35 @@ class YtDlpService:
         return False, None, False
 
     @classmethod
+    def find_persian_subtitles(cls, info: Dict[str, Any]) -> Tuple[bool, Optional[str], bool]:
+        """
+        Returns (has_persian, track_key, is_auto_generated).
+        Priority:
+        1. Check manual subtitles first (fa, fa-*, per, fas)
+        2. Check automatic captions (fa, fa-*, per, fas)
+        """
+        def _is_persian(k: str) -> bool:
+            k_lower = k.lower()
+            return (
+                k_lower in ("fa", "per", "fas")
+                or k_lower.startswith(("fa-", "fa_", "per-", "per_"))
+            )
+
+        # 1. Check manual subtitles first
+        subtitles = info.get("subtitles") or {}
+        for key in subtitles:
+            if _is_persian(key):
+                return True, key, False
+
+        # 2. Check automatic captions
+        auto_caps = info.get("automatic_captions") or {}
+        for key in auto_caps:
+            if _is_persian(key):
+                return True, key, True
+
+        return False, None, False
+
+    @classmethod
     def validate_duration(
         cls, info: Dict[str, Any], max_duration_seconds: int, allow_unknown: bool
     ) -> Tuple[bool, Optional[int], Optional[str]]:
@@ -362,6 +391,202 @@ class YtDlpService:
         minutes = (seconds % 3600) // 60
         secs = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    @staticmethod
+    def format_file_size(num_bytes: int) -> str:
+        """Formats byte count to human-readable string (e.g. 684 MB, 2.14 GB)."""
+        if num_bytes >= 1024 * 1024 * 1024:
+            val = num_bytes / (1024 ** 3)
+            return f"{val:.2f} GB"
+        elif num_bytes >= 1024 * 1024:
+            val = num_bytes / (1024 ** 2)
+            if val >= 10:
+                return f"{int(round(val))} MB"
+            return f"{val:.1f} MB"
+        elif num_bytes >= 1024:
+            return f"{int(round(num_bytes / 1024))} KB"
+        return f"{num_bytes} B"
+
+    @staticmethod
+    def format_mb(mb: int) -> str:
+        """Formats megabyte count to human-readable string (e.g. 1900 -> 1.9 GB, 48 -> 48 MB)."""
+        if mb >= 1000:
+            val = mb / 1000.0
+            return f"{val:g} GB"
+        return f"{mb} MB"
+
+    @classmethod
+    def calculate_expected_video_size(
+        cls,
+        info: Dict[str, Any],
+        target_height: int,
+        target_codec: str,
+    ) -> Tuple[int, str, Dict[str, Any]]:
+        """
+        Simulates yt-dlp's exact format selector to determine the exact video and audio
+        formats that will be selected during real download, and calculates the expected
+        final output file size (in bytes).
+
+        Returns: (expected_final_bytes, size_source, details)
+        size_source is one of: "exact", "approximate", "estimated".
+        """
+        format_spec = cls.build_video_format_spec(target_height, target_codec)
+        ydl_opts = cls.get_base_opts()
+        ydl_opts["format"] = format_spec
+
+        # Perform no-download format selection using yt-dlp
+        clean_info = dict(info)
+        clean_info.setdefault("id", "video")
+        clean_info.setdefault("title", "video")
+        clean_info.setdefault("extractor", "youtube")
+        clean_info.setdefault("extractor_key", "Youtube")
+        clean_info["formats"] = [
+            dict(f, url=f.get("url", "https://example.com/stream"))
+            for f in info.get("formats", [])
+        ]
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                selected = ydl.process_video_result(clean_info, download=False)
+            except Exception as e:
+                logger.error(f"yt-dlp format simulation failed for {target_height}p {target_codec}: {e}")
+                selected = None
+
+        if not selected:
+            return 0, "estimated", {"error": "Format selection failed"}
+
+        # Extract selected video and audio formats
+        requested_formats = selected.get("requested_formats")
+        if requested_formats and len(requested_formats) >= 2:
+            v_fmt = next(
+                (f for f in requested_formats if f.get("vcodec") and f.get("vcodec") != "none"),
+                requested_formats[0],
+            )
+            a_fmt = next(
+                (f for f in requested_formats if f.get("acodec") and f.get("acodec") != "none"),
+                requested_formats[1],
+            )
+        elif requested_formats and len(requested_formats) == 1:
+            v_fmt = requested_formats[0]
+            a_fmt = (
+                requested_formats[0]
+                if (requested_formats[0].get("acodec") and requested_formats[0].get("acodec") != "none")
+                else None
+            )
+        else:
+            v_fmt = selected
+            a_fmt = (
+                selected
+                if (selected.get("acodec") and selected.get("acodec") != "none")
+                else None
+            )
+
+        orig_formats = {str(f.get("format_id")): f for f in info.get("formats", [])}
+        orig_v = orig_formats.get(str(v_fmt.get("format_id")), v_fmt) if v_fmt else {}
+        orig_a = orig_formats.get(str(a_fmt.get("format_id")), a_fmt) if a_fmt else {}
+
+        duration = float(info.get("duration") or selected.get("duration") or 0.0)
+
+        # 1. Video Size Calculation
+        v_size = 0
+        v_source = "estimated"
+        if orig_v.get("filesize") and orig_v["filesize"] > 0:
+            v_size = int(orig_v["filesize"])
+            v_source = "exact"
+        elif orig_v.get("filesize_approx") and orig_v["filesize_approx"] > 0:
+            v_size = int(orig_v["filesize_approx"])
+            v_source = "approximate"
+        elif v_fmt:
+            if v_fmt.get("filesize") and v_fmt["filesize"] > 0:
+                v_size = int(v_fmt["filesize"])
+                v_source = "exact"
+            elif v_fmt.get("filesize_approx") and v_fmt["filesize_approx"] > 0:
+                v_size = int(v_fmt["filesize_approx"])
+                v_source = "estimated"
+            else:
+                v_bitrate = v_fmt.get("vbr") or v_fmt.get("tbr") or 0.0
+                if v_bitrate > 0 and duration > 0:
+                    v_size = int((float(v_bitrate) * 1000 / 8) * duration)
+                else:
+                    v_size = 0
+                v_source = "estimated"
+
+        # 2. Audio Size Calculation
+        a_size = 0
+        a_source = "exact"
+        audio_copied = True
+        a_codec_name = (a_fmt.get("acodec") or "").lower() if a_fmt else "none"
+
+        # Check if audio is AAC (or combined format where v_fmt == a_fmt)
+        if a_fmt is None or (v_fmt is a_fmt and a_fmt.get("acodec") != "none"):
+            # Combined format: entire stream size accounted for in v_size
+            a_size = 0
+            a_source = v_source
+            audio_copied = True
+        else:
+            is_aac = (
+                a_codec_name.startswith("mp4a")
+                or a_codec_name.startswith("aac")
+                or (a_fmt.get("ext") == "m4a" and "opus" not in a_codec_name)
+            )
+            if is_aac:
+                # AAC: stream-copied (-c:a copy)
+                audio_copied = True
+                if orig_a.get("filesize") and orig_a["filesize"] > 0:
+                    a_size = int(orig_a["filesize"])
+                    a_source = "exact"
+                elif orig_a.get("filesize_approx") and orig_a["filesize_approx"] > 0:
+                    a_size = int(orig_a["filesize_approx"])
+                    a_source = "approximate"
+                elif a_fmt.get("filesize") and a_fmt["filesize"] > 0:
+                    a_size = int(a_fmt["filesize"])
+                    a_source = "exact"
+                elif a_fmt.get("filesize_approx") and a_fmt["filesize_approx"] > 0:
+                    a_size = int(a_fmt["filesize_approx"])
+                    a_source = "estimated"
+                else:
+                    a_bitrate = a_fmt.get("abr") or a_fmt.get("tbr") or 128.0
+                    if a_bitrate > 0 and duration > 0:
+                        a_size = int((float(a_bitrate) * 1000 / 8) * duration)
+                    else:
+                        a_size = int((128 * 1000 / 8) * duration)
+                    a_source = "estimated"
+            else:
+                # Non-AAC: transcoded to AAC 192 kbps (-c:a aac -b:a 192k)
+                audio_copied = False
+                if duration > 0:
+                    a_size = int((192000 / 8) * duration)
+                else:
+                    a_size = int(a_fmt.get("filesize") or a_fmt.get("filesize_approx") or 0)
+                a_source = "estimated"
+
+        # 3. Container & metadata overhead (~0.5%)
+        overhead_bytes = int((v_size + a_size) * 0.005)
+        expected_final_size = v_size + a_size + overhead_bytes
+
+        # 4. Overall size_source resolution
+        if v_source == "exact" and a_source == "exact":
+            overall_source = "exact"
+        elif v_source == "estimated" or a_source == "estimated":
+            overall_source = "estimated"
+        else:
+            overall_source = "approximate"
+
+        details = {
+            "video_format_id": v_fmt.get("format_id") if v_fmt else None,
+            "audio_format_id": a_fmt.get("format_id") if a_fmt else None,
+            "video_codec": v_fmt.get("vcodec") if v_fmt else None,
+            "audio_codec": a_fmt.get("acodec") if a_fmt else None,
+            "video_size": v_size,
+            "audio_final_size": a_size,
+            "overhead_bytes": overhead_bytes,
+            "expected_final_size": expected_final_size,
+            "size_source": overall_source,
+            "audio_copied": audio_copied,
+            "duration": duration,
+        }
+
+        return expected_final_size, overall_source, details
 
     @classmethod
     def build_video_format_spec(cls, target_height: int, target_codec: Optional[str] = None) -> str:
@@ -398,9 +623,10 @@ class YtDlpService:
         output_template: str,
         cookies_file: Optional[str] = None,
         on_retry: Optional[Callable[[int, float, Exception], Any]] = None,
+        langs: Optional[List[str]] = None,
     ) -> None:
         """
-        Downloads English subtitles with conservative backoff specifically for HTTP 429:
+        Downloads subtitles with conservative backoff specifically for HTTP 429:
         - Attempt 1: wait ~10s (+jitter)
         - Attempt 2: wait ~30s (+jitter)
         - Attempt 3: wait ~60s (+jitter)
@@ -422,7 +648,7 @@ class YtDlpService:
             "skip_download": True,
             "writesubtitles": True,
             "writeautomaticsub": True,
-            "subtitleslangs": ["en.*", "en"],
+            "subtitleslangs": langs or ["en.*", "en"],
             "subtitlesformat": "srt/vtt/best",
         })
 

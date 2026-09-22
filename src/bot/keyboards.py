@@ -78,20 +78,26 @@ def build_codec_keyboard(
 
 
 def build_subtitle_keyboard(
-    source_id: str, has_english: bool, ai_available: bool
+    source_id: str,
+    has_english: bool,
+    ai_available: bool,
+    has_persian: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     SUBTITLE MENU:
-    Only 🇬🇧 English and 🇮🇷 Persian exist.
-    Persian appears ONLY when English exists AND AI is enabled and configured.
+    - 🇬🇧 English appears when English subtitles are available.
+    - 🇮🇷 Persian appears if native Persian subtitles exist OR (English exists AND AI is available).
     """
     keyboard: List[List[InlineKeyboardButton]] = []
     row: List[InlineKeyboardButton] = []
 
     if has_english:
         row.append(InlineKeyboardButton(text="🇬🇧 English", callback_data=f"sub:{source_id}:EN"))
-        if ai_available:
-            row.append(InlineKeyboardButton(text="🇮🇷 Persian", callback_data=f"sub:{source_id}:FA"))
+
+    if has_persian or (has_english and ai_available):
+        row.append(InlineKeyboardButton(text="🇮🇷 Persian", callback_data=f"sub:{source_id}:FA"))
+
+    if row:
         keyboard.append(row)
 
     keyboard.append([

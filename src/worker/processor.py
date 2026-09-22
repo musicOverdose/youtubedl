@@ -14,6 +14,7 @@ from src.bot.keyboards import build_must_join_keyboard
 from src.core.config import settings
 from src.core.constants import (
     REDIS_KEY_SUBTITLE_CACHE_PREFIX,
+    REDIS_KEY_SUBTITLE_FA_CACHE_PREFIX,
     DeliveryStatus,
     JobStatus,
     OperationType,
@@ -298,6 +299,73 @@ class JobProcessor:
                     target_height = job.target_height or 1080
                     target_codec = job.output_codec or "H264"
 
+                    # 1. WORKER-SIDE SECONDARY SIZE & ROUTE SAFETY CHECK (Requirement 5, 6, 15)
+                    info = await YtDlpService.extract_metadata(job.canonical_url)
+                    expected_bytes, size_source, size_details = YtDlpService.calculate_expected_video_size(
+                        info, target_height, target_codec
+                    )
+                    limit_mb = SettingService.get_max_video_file_size_mb(api_mode)
+                    limit_bytes = limit_mb * 1024 * 1024
+                    cloud_limit_bytes = getattr(settings, "MAX_VIDEO_FILE_SIZE_MB_CLOUD", 48) * 1024 * 1024
+                    allowed = (expected_bytes <= limit_bytes)
+
+                    # Structured size check logging (Requirement 15)
+                    logger.info(
+                        "SIZE CHECK\n"
+                        "delivery_route=%s\n"
+                        "video_format_id=%s\n"
+                        "audio_format_id=%s\n"
+                        "video_codec=%s\n"
+                        "audio_codec=%s\n"
+                        "video_size=%d\n"
+                        "audio_final_size=%d\n"
+                        "expected_final_size=%d\n"
+                        "size_source=%s\n"
+                        "limit=%d\n"
+                        "allowed=%s",
+                        api_mode,
+                        size_details.get("video_format_id"),
+                        size_details.get("audio_format_id"),
+                        size_details.get("video_codec"),
+                        size_details.get("audio_codec"),
+                        size_details.get("video_size", 0),
+                        size_details.get("audio_final_size", 0),
+                        expected_bytes,
+                        size_source,
+                        limit_bytes,
+                        "true" if allowed else "false",
+                    )
+
+                    formatted_size = YtDlpService.format_file_size(expected_bytes)
+                    formatted_limit = YtDlpService.format_mb(limit_mb)
+
+                    # Route safety: A job larger than Cloud limit must NOT fall back to Cloud Bot API
+                    if expected_bytes > cloud_limit_bytes and api_mode != "local":
+                        err_msg = (
+                            f"Job requires Local Bot API delivery ({formatted_size} exceeds "
+                            f"{SettingService.get_max_video_file_size_mb('cloud')} MB Cloud limit), "
+                            f"but active delivery route is Cloud Bot API."
+                        )
+                        logger.error(err_msg)
+                        job.status = JobStatus.FAILED.value
+                        job.error_code = "UPLOAD_ROUTE_UNAVAILABLE"
+                        job.error_message = err_msg
+                        await session.commit()
+                        await notifier.update("❌", "Upload Route Unavailable", err_msg, force=True)
+                        return
+
+                    if not allowed:
+                        err_msg = (
+                            f"Video size ({formatted_size}) exceeds maximum allowed upload limit of {formatted_limit}."
+                        )
+                        logger.warning("Worker pre-download check rejected video job %s: %s", job_id, err_msg)
+                        job.status = JobStatus.FAILED.value
+                        job.error_code = "FILE_TOO_LARGE"
+                        job.error_message = err_msg
+                        await session.commit()
+                        await notifier.update("❌", "Video Too Large", err_msg, force=True)
+                        return
+
                     job.status = JobStatus.DOWNLOADING.value
                     await session.commit()
                     await notifier.update("⬇️", "Downloading video", f"Resolution: {job.resolution} ({target_codec})", force=True)
@@ -547,103 +615,213 @@ class JobProcessor:
                 # PIPELINE: SUBTITLE PROCESSING
                 # ==========================================
                 elif job.operation == OperationType.SUBTITLE.value or job.operation == "SUBTITLE":
-                    job.status = JobStatus.DOWNLOADING.value
-                    await session.commit()
-                    await notifier.update("📝", "Downloading subtitles...", "Extracting English subtitle track...", force=True)
-
-                    sub_template = os.path.join(job_dir, "subs.%(ext)s")
-
-                    # 1. Check Redis cache for already-downloaded English subtitles for this source
-                    english_srt = None
-                    try:
-                        r = get_redis_client()
-                        sub_cache_key = f"{REDIS_KEY_SUBTITLE_CACHE_PREFIX}{job.source_id}"
-                        cached_sub = await r.get(sub_cache_key)
-                        if cached_sub:
-                            english_srt = cached_sub if isinstance(cached_sub, str) else cached_sub.decode("utf-8")
-                            logger.info("Reusing cached English subtitles from Redis for source %s", job.source_id)
-                    except Exception as ce:
-                        logger.debug("Error checking Redis subtitle cache: %s", ce)
-
-                    if not english_srt:
-                        async def _on_sub_retry(attempt_num: int, wait_sec: float, err: Exception):
-                            await notifier.update(
-                                "⚠️",
-                                "YouTube Temporarily Rate-Limited",
-                                f"YouTube temporarily rate-limited subtitles.\nRetrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
-                                force=True,
-                            )
-
-                        try:
-                            await YtDlpService.download_subtitles(
-                                url=job.canonical_url,
-                                output_template=sub_template,
-                                on_retry=_on_sub_retry,
-                            )
-                        except YouTubeSubtitleRateLimitError as rl_err:
-                            raise RuntimeError(str(rl_err)) from rl_err
-
-                        sub_files = glob.glob(os.path.join(job_dir, "subs*.*"))
-                        if not sub_files:
-                            raise FileNotFoundError("English subtitles could not be extracted")
-
-                        with open(sub_files[0], "r", encoding="utf-8", errors="ignore") as sf:
-                            raw_sub_content = sf.read()
-
-                        parsed_segs = AIService.parse_srt(raw_sub_content)
-                        if not parsed_segs:
-                            raise ValueError("Failed to parse subtitle segments")
-                        english_srt = "\n".join(seg.to_srt() for seg in parsed_segs)
-
-                        # Cache in Redis with 24-hour TTL (limit size to max 1 MB)
-                        try:
-                            sub_bytes = len(english_srt.encode("utf-8"))
-                            if sub_bytes <= 1024 * 1024:
-                                r = get_redis_client()
-                                await r.set(f"{REDIS_KEY_SUBTITLE_CACHE_PREFIX}{job.source_id}", english_srt, ex=86400)
-                                logger.info("Cached English subtitles in Redis for %s (%d bytes, TTL=24h)", job.source_id, sub_bytes)
-                            else:
-                                logger.debug("English subtitles for %s exceed 1 MB (%d bytes), skipping Redis cache", job.source_id, sub_bytes)
-                        except Exception as se:
-                            logger.debug("Failed to cache English subtitles in Redis: %s", se)
-                    else:
-                        parsed_segs = AIService.parse_srt(english_srt)
-                        if not parsed_segs:
-                            raise ValueError("Failed to parse cached subtitle segments")
-
-                    final_srt_content = english_srt
                     target_lang = job.subtitle_lang or "EN"
+                    sub_template = os.path.join(job_dir, "subs.%(ext)s")
+                    r = get_redis_client()
+                    final_srt_content = None
+                    persian_handled = False
 
+                    # ----------------------------------------------------------
+                    # PERSIAN SUBTITLE HIERARCHY (Requirements 9-13, 15)
+                    # 1. Redis Persian Cache
+                    # 2. YouTube manual Persian
+                    # 3. YouTube automatic Persian
+                    # 4. English download + AI translation fallback
+                    # ----------------------------------------------------------
                     if target_lang == "FA":
-                        # Check chunk limit before starting AI translation
-                        chunk_size = getattr(settings, "AI_CHUNK_SIZE", 10)
-                        total_chunks = (len(parsed_segs) + chunk_size - 1) // chunk_size
-                        max_chunks = getattr(settings, "AI_MAX_CHUNKS", 50)
-                        if max_chunks and max_chunks > 0 and total_chunks > max_chunks:
-                            max_cues = max_chunks * chunk_size
-                            raise RuntimeError(
-                                f"Video subtitle size is too large for AI translation ({total_chunks} chunks / {len(parsed_segs)} cues exceeds maximum allowed limit of {max_chunks} chunks / {max_cues} cues). Please download English subtitles instead."
-                            )
+                        fa_cache_key = f"{REDIS_KEY_SUBTITLE_FA_CACHE_PREFIX}{job.source_id}"
+                        # 1. Check Redis Persian cache
+                        try:
+                            cached_fa = await r.get(fa_cache_key)
+                            if cached_fa:
+                                final_srt_content = cached_fa if isinstance(cached_fa, str) else cached_fa.decode("utf-8")
+                                logger.info(
+                                    "SUBTITLE SOURCE\n"
+                                    "source=redis\n"
+                                    "language=fa\n"
+                                    "ai_used=false"
+                                )
+                                persian_handled = True
+                        except Exception as ce:
+                            logger.debug("Error checking Redis Persian subtitle cache: %s", ce)
 
-                        job.status = JobStatus.PROCESSING.value
+                        # 2 & 3. Check YouTube for native Persian tracks (manual > auto)
+                        if not persian_handled:
+                            info = await YtDlpService.extract_metadata(job.canonical_url)
+                            has_persian, track_key, is_auto = YtDlpService.find_persian_subtitles(info)
+                            if has_persian and track_key:
+                                source_type = "youtube_manual" if not is_auto else "youtube_auto"
+                                logger.info(
+                                    "Native Persian subtitle track detected (%s, key=%s). Initiating direct download (bypassing AI).",
+                                    source_type,
+                                    track_key,
+                                )
+
+                                # Progress UX for native Persian (Requirement 13)
+                                job.status = JobStatus.DOWNLOADING.value
+                                await session.commit()
+                                await notifier.update("🇮🇷", "Persian subtitles found", "Native Persian subtitles found on YouTube.", force=True)
+                                await notifier.update("📝", "Downloading Persian subtitles...", f"Downloading native {track_key} subtitle track...", force=True)
+
+                                async def _on_fa_retry(attempt_num: int, wait_sec: float, err: Exception):
+                                    await notifier.update(
+                                        "⚠️",
+                                        "YouTube Rate-Limited (Persian Subtitles)",
+                                        f"YouTube temporarily rate-limited subtitles.\nRetrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
+                                        force=True,
+                                    )
+
+                                try:
+                                    # Download specific Persian subtitle track
+                                    await YtDlpService.download_subtitles(
+                                        url=job.canonical_url,
+                                        output_template=sub_template,
+                                        on_retry=_on_fa_retry,
+                                        langs=[track_key, "fa.*", "fa", "per", "fas"],
+                                    )
+
+                                    fa_sub_files = glob.glob(os.path.join(job_dir, "subs*.*"))
+                                    if fa_sub_files:
+                                        with open(fa_sub_files[0], "r", encoding="utf-8", errors="ignore") as sf:
+                                            raw_sub_content = sf.read()
+
+                                        # Format normalization: VTT/SRT -> standard SRT locally without AI (Requirement 12)
+                                        parsed_segs = AIService.parse_srt(raw_sub_content)
+                                        if parsed_segs:
+                                            final_srt_content = "\n".join(seg.to_srt() for seg in parsed_segs)
+                                            # Cache in Redis with 24h TTL and <= 1 MB size limit (Requirement 11)
+                                            try:
+                                                sub_bytes = len(final_srt_content.encode("utf-8"))
+                                                if sub_bytes <= 1024 * 1024:
+                                                    await r.set(fa_cache_key, final_srt_content, ex=86400)
+                                                    logger.info("Cached direct Persian subtitles in Redis for %s (%d bytes, TTL=24h)", job.source_id, sub_bytes)
+                                            except Exception as se:
+                                                logger.debug("Failed to cache Persian subtitles in Redis: %s", se)
+
+                                            logger.info(
+                                                "SUBTITLE SOURCE\n"
+                                                "source=%s\n"
+                                                "language=fa\n"
+                                                "ai_used=false",
+                                                source_type,
+                                            )
+                                            persian_handled = True
+                                except Exception as fa_dl_err:
+                                    logger.warning(
+                                        "Direct Persian subtitle download failed after retries: %s. Falling back to English + AI translation.",
+                                        fa_dl_err,
+                                    )
+                                    await notifier.update(
+                                        "⚠️",
+                                        "Persian Subtitle Download Failed",
+                                        "Native Persian download unavailable. Falling back to English subtitles + AI translation...",
+                                        force=True,
+                                    )
+
+                    # ----------------------------------------------------------
+                    # 4. ENGLISH SUBTITLE DOWNLOAD + AI TRANSLATION (IF FA & NOT HANDLED)
+                    # OR STANDARD ENGLISH SUBTITLE RETRIEVAL (IF EN)
+                    # ----------------------------------------------------------
+                    if not persian_handled:
+                        job.status = JobStatus.DOWNLOADING.value
                         await session.commit()
-                        await notifier.update("🌐", "Translating subtitles...", f"Translating subtitles to Persian with AI ({total_chunks} chunks)...", force=True)
+                        await notifier.update("📝", "Downloading subtitles...", "Extracting English subtitle track...", force=True)
 
-                        async def _on_ai_progress(c_idx: int, total_c: int, attempt: int):
-                            pct = (c_idx / total_c) * 100.0 if total_c > 0 else 0.0
-                            bar = StatusNotifier.render_progress_bar(pct)
-                            if attempt > 1:
-                                d_text = f"Chunk {c_idx}/{total_c} • Retry {attempt}/3\n{bar}"
-                            else:
-                                d_text = f"Chunk {c_idx}/{total_c}\n{bar}"
-                            await notifier.update("🌐", "Translating subtitles", d_text)
+                        english_srt = None
+                        try:
+                            sub_cache_key = f"{REDIS_KEY_SUBTITLE_CACHE_PREFIX}{job.source_id}"
+                            cached_sub = await r.get(sub_cache_key)
+                            if cached_sub:
+                                english_srt = cached_sub if isinstance(cached_sub, str) else cached_sub.decode("utf-8")
+                                logger.info("Reusing cached English subtitles from Redis for source %s", job.source_id)
+                        except Exception as ce:
+                            logger.debug("Error checking Redis subtitle cache: %s", ce)
 
-                        ok, persian_srt, ai_err = await AIService.translate_english_to_persian(
-                            english_srt, on_progress=_on_ai_progress
-                        )
-                        if not ok or not persian_srt:
-                            raise RuntimeError(f"Persian translation failed: {ai_err}")
-                        final_srt_content = persian_srt
+                        if not english_srt:
+                            async def _on_sub_retry(attempt_num: int, wait_sec: float, err: Exception):
+                                await notifier.update(
+                                    "⚠️",
+                                    "YouTube Temporarily Rate-Limited",
+                                    f"YouTube temporarily rate-limited subtitles.\nRetrying in {int(wait_sec)}s (attempt {attempt_num}/3)...",
+                                    force=True,
+                                )
+
+                            try:
+                                await YtDlpService.download_subtitles(
+                                    url=job.canonical_url,
+                                    output_template=sub_template,
+                                    on_retry=_on_sub_retry,
+                                    langs=["en.*", "en"],
+                                )
+                            except YouTubeSubtitleRateLimitError as rl_err:
+                                raise RuntimeError(str(rl_err)) from rl_err
+
+                            sub_files = glob.glob(os.path.join(job_dir, "subs*.*"))
+                            if not sub_files:
+                                raise FileNotFoundError("English subtitles could not be extracted")
+
+                            with open(sub_files[0], "r", encoding="utf-8", errors="ignore") as sf:
+                                raw_sub_content = sf.read()
+
+                            parsed_segs = AIService.parse_srt(raw_sub_content)
+                            if not parsed_segs:
+                                raise ValueError("Failed to parse subtitle segments")
+                            english_srt = "\n".join(seg.to_srt() for seg in parsed_segs)
+
+                            # Cache in Redis with 24-hour TTL (limit size to max 1 MB)
+                            try:
+                                sub_bytes = len(english_srt.encode("utf-8"))
+                                if sub_bytes <= 1024 * 1024:
+                                    await r.set(f"{REDIS_KEY_SUBTITLE_CACHE_PREFIX}{job.source_id}", english_srt, ex=86400)
+                                    logger.info("Cached English subtitles in Redis for %s (%d bytes, TTL=24h)", job.source_id, sub_bytes)
+                                else:
+                                    logger.debug("English subtitles for %s exceed 1 MB (%d bytes), skipping Redis cache", job.source_id, sub_bytes)
+                            except Exception as se:
+                                logger.debug("Failed to cache English subtitles in Redis: %s", se)
+                        else:
+                            parsed_segs = AIService.parse_srt(english_srt)
+                            if not parsed_segs:
+                                raise ValueError("Failed to parse cached subtitle segments")
+
+                        final_srt_content = english_srt
+
+                        if target_lang == "FA":
+                            # Check chunk limit before starting AI translation
+                            chunk_size = getattr(settings, "AI_CHUNK_SIZE", 10)
+                            total_chunks = (len(parsed_segs) + chunk_size - 1) // chunk_size
+                            max_chunks = getattr(settings, "AI_MAX_CHUNKS", 50)
+                            if max_chunks and max_chunks > 0 and total_chunks > max_chunks:
+                                max_cues = max_chunks * chunk_size
+                                raise RuntimeError(
+                                    f"Video subtitle size is too large for AI translation ({total_chunks} chunks / {len(parsed_segs)} cues exceeds maximum allowed limit of {max_chunks} chunks / {max_cues} cues). Please download English subtitles instead."
+                                )
+
+                            job.status = JobStatus.PROCESSING.value
+                            await session.commit()
+                            await notifier.update("🌐", "Translating subtitles...", f"Translating subtitles to Persian with AI ({total_chunks} chunks)...", force=True)
+
+                            async def _on_ai_progress(c_idx: int, total_c: int, attempt: int):
+                                pct = (c_idx / total_c) * 100.0 if total_c > 0 else 0.0
+                                bar = StatusNotifier.render_progress_bar(pct)
+                                if attempt > 1:
+                                    d_text = f"Chunk {c_idx}/{total_c} • Retry {attempt}/3\n{bar}"
+                                else:
+                                    d_text = f"Chunk {c_idx}/{total_c}\n{bar}"
+                                await notifier.update("🌐", "Translating subtitles", d_text)
+
+                            ok, persian_srt, ai_err = await AIService.translate_english_to_persian(
+                                english_srt, on_progress=_on_ai_progress
+                            )
+                            if not ok or not persian_srt:
+                                raise RuntimeError(f"Persian translation failed: {ai_err}")
+                            final_srt_content = persian_srt
+
+                            logger.info(
+                                "SUBTITLE SOURCE\n"
+                                "source=ai_translation\n"
+                                "language=fa\n"
+                                "ai_used=true"
+                            )
 
                     out_srt_file = os.path.join(job_dir, f"{target_lang}_subtitles.srt")
                     with open(out_srt_file, "w", encoding="utf-8") as f:

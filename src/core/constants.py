@@ -87,6 +87,7 @@ REDIS_KEY_MEMBERSHIP_PREFIX = "ytdl:membership:cache:"
 REDIS_KEY_CANCEL_PREFIX = "ytdl:cancel:"
 REDIS_KEY_METADATA_PREFIX = "ytdl:metadata:cache:"
 REDIS_KEY_SUBTITLE_CACHE_PREFIX = "ytdl:subs:en:"
+REDIS_KEY_SUBTITLE_FA_CACHE_PREFIX = "ytdl:subs:fa:"
 
 # Default Timeouts and Settings
 MEMBERSHIP_CACHE_TTL = 60  # seconds (non-authoritative UI cache only)

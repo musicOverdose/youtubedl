@@ -1,6 +1,6 @@
 import uuid
 from aiogram import Bot, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from src.bot.keyboards import build_must_join_keyboard, build_queue_status_keyboard
 from src.core.config import settings
@@ -12,6 +12,7 @@ from src.models.job_request import JobRequest
 from src.services.cache_service import CacheService
 from src.services.must_join_service import MustJoinService
 from src.services.queue_service import QueueService
+from src.services.setting_service import SettingService
 from src.services.ytdlp_service import YtDlpService, get_canonical_url
 
 logger = setup_logger("codec_handler")
@@ -69,7 +70,71 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
             logger.error(f"Error fetching metadata for verification: {e}")
             title = "YouTube Video"
 
-        # 3. EXACT CACHE KEY GENERATION & CACHE LOOKUP
+        # 3. PRE-DOWNLOAD FINAL FILE SIZE CHECK
+        expected_bytes, size_source, size_details = YtDlpService.calculate_expected_video_size(
+            info, height, codec
+        )
+        api_mode = await SettingService.get_active_api_mode(session)
+        limit_mb = SettingService.get_max_video_file_size_mb(api_mode)
+        limit_bytes = limit_mb * 1024 * 1024
+        allowed = (expected_bytes <= limit_bytes)
+
+        # Structured size check logging (Requirement 15)
+        logger.info(
+            "SIZE CHECK\n"
+            "delivery_route=%s\n"
+            "video_format_id=%s\n"
+            "audio_format_id=%s\n"
+            "video_codec=%s\n"
+            "audio_codec=%s\n"
+            "video_size=%d\n"
+            "audio_final_size=%d\n"
+            "expected_final_size=%d\n"
+            "size_source=%s\n"
+            "limit=%d\n"
+            "allowed=%s",
+            api_mode,
+            size_details.get("video_format_id"),
+            size_details.get("audio_format_id"),
+            size_details.get("video_codec"),
+            size_details.get("audio_codec"),
+            size_details.get("video_size", 0),
+            size_details.get("audio_final_size", 0),
+            expected_bytes,
+            size_source,
+            limit_bytes,
+            "true" if allowed else "false",
+        )
+
+        formatted_size = YtDlpService.format_file_size(expected_bytes)
+        formatted_limit = YtDlpService.format_mb(limit_mb)
+        size_prefix = "Size: " if size_source == "exact" else "Estimated size: ~"
+        size_line = f"📦 {size_prefix}{formatted_size}"
+
+        if not allowed:
+            # Reject immediately BEFORE queuing or downloading (Requirement 6 & 7)
+            rejection_alert = (
+                f"❌ {size_prefix}{formatted_size}\n"
+                f"Maximum allowed: {formatted_limit}\n\n"
+                f"Please select a lower quality."
+            )
+            await callback.answer(rejection_alert, show_alert=True)
+            try:
+                await callback.message.answer(
+                    f"❌ <b>Video too large for upload</b>\n\n"
+                    f"🎬 <b>{codec} • {height}p</b>\n"
+                    f"📦 {size_prefix}<b>{formatted_size}</b>\n"
+                    f"⚠️ Maximum allowed: <b>{formatted_limit}</b>\n\n"
+                    f"Please select a lower quality.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="⬅️ Back to Qualities", callback_data=f"back_q:{source_id}")
+                    ]]),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send size rejection message: {e}")
+            return
+
+        # 4. EXACT CACHE KEY GENERATION & CACHE LOOKUP
         cache_key = CacheService.generate_cache_key(
             source_id=source_id,
             operation=OperationType.VIDEO.value,
@@ -90,13 +155,13 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
             else:
                 logger.warning(f"Cache delivery failed: {err}. Falling through to download.")
 
-        # 4. ENFORCE PER-USER LIMITS
-        allowed, limit_err = await QueueService.check_user_limits(session, user_id)
-        if not allowed:
+        # 5. ENFORCE PER-USER LIMITS
+        allowed_user, limit_err = await QueueService.check_user_limits(session, user_id)
+        if not allowed_user:
             await callback.answer(limit_err, show_alert=True)
             return
 
-        # 5. DUPLICATE JOB COALESCING
+        # 6. DUPLICATE JOB COALESCING
         # Check if an active/queued job for this cache_key already exists
         active_statuses = [
             JobStatus.QUEUED.value,
@@ -131,7 +196,8 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
 
             status_msg = await callback.message.answer(
                 f"⏳ <b>Attached to existing job</b>\n"
-                f"🎬 <b>{codec} · {height}p</b>\n"
+                f"🎬 <b>{codec} • {height}p</b>\n"
+                f"{size_line}\n"
                 f"Position: {pos_str}\n"
                 f"Active jobs: {active_count} / {limit}",
                 reply_markup=build_queue_status_keyboard(existing_job.id),
@@ -141,7 +207,7 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
             await callback.answer("Added to queue!")
             return
 
-        # 6. CREATE NEW JOB & QUEUE
+        # 7. CREATE NEW JOB & QUEUE
         job_id = str(uuid.uuid4())
         new_job = Job(
             id=job_id,
@@ -174,7 +240,8 @@ async def on_codec_selected(callback: CallbackQuery, bot: Bot):
 
         status_msg = await callback.message.answer(
             f"⏳ <b>Added to queue</b>\n"
-            f"🎬 <b>{codec} · {height}p</b>\n"
+            f"🎬 <b>{codec} • {height}p</b>\n"
+            f"{size_line}\n"
             f"Position: #{position}\n"
             f"Active: {active_count} / {limit}",
             reply_markup=build_queue_status_keyboard(job_id),

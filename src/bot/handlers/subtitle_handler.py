@@ -37,14 +37,20 @@ async def on_subtitle_menu(callback: CallbackQuery, bot: Bot):
         return
 
     has_english, _, _ = YtDlpService.check_english_subtitles(info)
-    if not has_english:
+    has_persian, _, _ = YtDlpService.find_persian_subtitles(info)
+    if not has_english and not has_persian:
         await callback.answer(
-            "No English subtitles are available for this video.", show_alert=True
+            "No subtitles are available for this video.", show_alert=True
         )
         return
 
     ai_ready = AIService.is_configured()
-    keyboard = build_subtitle_keyboard(source_id, has_english=True, ai_available=ai_ready)
+    keyboard = build_subtitle_keyboard(
+        source_id,
+        has_english=has_english,
+        ai_available=ai_ready,
+        has_persian=has_persian,
+    )
     try:
         await callback.message.edit_reply_markup(reply_markup=keyboard)
     except Exception as e:
@@ -74,11 +80,19 @@ async def on_subtitle_selected(callback: CallbackQuery, bot: Bot):
         if not await MustJoinService.enforce_must_join_callback(callback, bot, session):
             return
 
-        if lang == "FA" and not AIService.is_configured():
-            await callback.answer(
-                "Persian AI translation is currently not configured.", show_alert=True
-            )
-            return
+        if lang == "FA":
+            try:
+                info = await YtDlpService.extract_metadata(canonical_url)
+                has_persian, _, _ = YtDlpService.find_persian_subtitles(info)
+            except Exception:
+                has_persian = False
+
+            if not has_persian and not AIService.is_configured():
+                await callback.answer(
+                    "Persian AI translation is currently not configured and no native Persian subtitles exist.",
+                    show_alert=True,
+                )
+                return
 
         # 2. EXACT CACHE LOOKUP
         cache_key = CacheService.generate_cache_key(

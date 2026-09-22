@@ -74,9 +74,13 @@ class AIService:
             match = SRT_TIMESTAMP_REGEX.match(lines[time_line_idx])
             if match:
                 start, end = match.group(1), match.group(2)
-                text = " ".join(lines[time_line_idx + 1 :])
+                raw_text = " ".join(lines[time_line_idx + 1 :])
+                clean_text = re.sub(r"<[^>]+>", "", raw_text).strip()
+                clean_text = re.sub(r"\s+", " ", clean_text)
+                if not clean_text:
+                    continue
                 idx = len(segments) + 1
-                segments.append(SubtitleSegment(idx, start, end, text))
+                segments.append(SubtitleSegment(idx, start, end, clean_text))
 
         return segments
 

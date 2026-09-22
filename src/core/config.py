@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     MAX_QUEUED_PER_USER: int = Field(default=5)
     MAX_TEMP_STORAGE_GB: int = Field(default=30)
     MAX_UPLOAD_SIZE_MB: int = Field(default=2000)
+    MAX_VIDEO_FILE_SIZE_MB_LOCAL: int = Field(default=1900, description="Safe maximum video file size in MB for Local Bot API")
+    MAX_VIDEO_FILE_SIZE_MB_CLOUD: int = Field(default=48, description="Safe maximum video file size in MB for Cloud Bot API")
     WORKER_MODE: str = Field(default="all", description="Worker mode: all, video, or subtitle")
 
     # Duration Controls
