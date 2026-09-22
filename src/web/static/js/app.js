@@ -102,7 +102,12 @@ async function loadDashboard() {
     document.getElementById('stat-completed').textContent = data.jobs.completed;
     document.getElementById('stat-failed').textContent = data.jobs.failed;
 
-    document.getElementById('stat-max-dur').textContent = data.settings.max_duration_formatted;
+    if (document.getElementById('stat-max-size')) {
+      document.getElementById('stat-max-size').textContent = data.settings.max_video_size_formatted || `${data.settings.max_video_file_size_mb_local || 1900} MB`;
+    }
+    if (document.getElementById('stat-max-dur')) {
+      document.getElementById('stat-max-dur').textContent = data.settings.max_duration_formatted || '02:00:00';
+    }
     document.getElementById('stat-ai-status').textContent = data.settings.ai_enabled
       ? (data.settings.ai_configured ? 'ON (Ready)' : 'ON (Not Configured)') : 'OFF';
     document.getElementById('stat-cookie-status').textContent = data.settings.cookies_enabled ? 'ON' : 'OFF';
@@ -279,35 +284,195 @@ async function deleteCache(id) {
 }
 
 // 5. USERS
+let currentUsersTab = 'all';
+const cachedWhitelistSet = new Set();
+
+function switchUsersTab(tab) {
+  currentUsersTab = tab;
+  const btnAll = document.getElementById('btn-users-tab-all');
+  const btnBanned = document.getElementById('btn-users-tab-banned');
+  const btnWl = document.getElementById('btn-users-tab-whitelist');
+  const tableView = document.getElementById('users-view-table');
+  const wlView = document.getElementById('users-view-whitelist');
+  const searchContainer = document.getElementById('users-search-container');
+
+  if (btnAll) btnAll.className = tab === 'all' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+  if (btnBanned) btnBanned.className = tab === 'banned' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+  if (btnWl) btnWl.className = tab === 'whitelist' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+
+  if (tab === 'whitelist') {
+    if (tableView) tableView.classList.add('hidden');
+    if (wlView) wlView.classList.remove('hidden');
+    if (searchContainer) searchContainer.style.display = 'none';
+    loadUsersWhitelist();
+  } else {
+    if (tableView) tableView.classList.remove('hidden');
+    if (wlView) wlView.classList.add('hidden');
+    if (searchContainer) searchContainer.style.display = '';
+    loadUsers();
+  }
+}
+
+async function fetchWhitelistSet() {
+  try {
+    const res = await API.get('/api/must-join/exempt-users');
+    const raw = res.exempt_users || '';
+    cachedWhitelistSet.clear();
+    raw.split(/[\n,]+/).map(s => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean).forEach(x => cachedWhitelistSet.add(x));
+    const badge = document.getElementById('badge-users-whitelist-count');
+    if (badge) {
+      badge.textContent = cachedWhitelistSet.size;
+      badge.style.display = cachedWhitelistSet.size > 0 ? 'inline-block' : 'none';
+    }
+  } catch (e) {}
+}
+
+function isUserInWhitelist(id, username) {
+  if (id && cachedWhitelistSet.has(String(id))) return true;
+  if (username && cachedWhitelistSet.has(username.toLowerCase().replace(/^@/, ''))) return true;
+  return false;
+}
+
 async function loadUsers() {
   const search = document.getElementById('users-search')?.value || '';
+  const statusParam = currentUsersTab === 'banned' ? '&status=BANNED' : '';
   try {
-    const data = await API.get(`/api/users?limit=50&search=${encodeURIComponent(search)}`);
+    if (cachedWhitelistSet.size === 0) {
+      fetchWhitelistSet();
+    }
+    const data = await API.get(`/api/users?limit=50&search=${encodeURIComponent(search)}${statusParam}`);
     const tbody = document.getElementById('tbody-users');
+    if (!tbody) return;
+
+    if (data.banned_count !== undefined) {
+      const badge = document.getElementById('badge-users-banned-count');
+      if (badge) {
+        badge.textContent = data.banned_count;
+        badge.style.display = data.banned_count > 0 ? 'inline-block' : 'none';
+      }
+    }
+
     if (data.items.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No users found</td></tr>';
+      const emptyMsg = currentUsersTab === 'banned' ? 'No banned users found' : 'No users found';
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="7">${emptyMsg}</td></tr>`;
     } else {
-      tbody.innerHTML = data.items.map(u => `
-        <tr>
-          <td><code>${u.id}</code></td>
-          <td><b>@${escapeHtml(u.username || 'N/A')}</b> <span class="text-muted font-sm">(${escapeHtml(u.first_name || '')})</span></td>
-          <td><span class="badge ${u.role === 'ADMIN' ? 'badge-info' : 'badge-secondary'}">${u.role}</span></td>
-          <td><span class="badge ${u.status === 'ACTIVE' ? 'badge-success' : 'badge-danger'}">${u.status}</span></td>
-          <td><span class="font-mono">${u.total_jobs}</span> <span class="text-muted font-sm">(${u.successful_jobs} ok / ${u.failed_jobs} fail)</span></td>
-          <td class="font-sm">${formatDate(u.last_seen_at)}</td>
-          <td>
-            ${u.status === 'ACTIVE'
-              ? `<button class="btn btn-danger btn-sm" onclick="setUserStatus(${u.id}, 'BANNED')">Ban</button>`
-              : `<button class="btn btn-success btn-sm" onclick="setUserStatus(${u.id}, 'ACTIVE')">Unban</button>`}
-          </td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = data.items.map(u => {
+        const isWhitelisted = isUserInWhitelist(u.id, u.username);
+        const wlBadge = isWhitelisted ? '<span class="badge badge-info ml-1" title="Must-Join Whitelisted">⭐ Exempt</span>' : '';
+        const wlBtn = isWhitelisted
+          ? `<button class="btn btn-secondary btn-sm" onclick="toggleUserWhitelist(${u.id}, '${escapeHtml(u.username || '')}')" title="Remove from Must-Join Whitelist">Remove Whitelist</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="toggleUserWhitelist(${u.id}, '${escapeHtml(u.username || '')}')" title="Add to Must-Join Whitelist">+ Whitelist</button>`;
+
+        return `
+          <tr>
+            <td><code>${u.id}</code></td>
+            <td><b>@${escapeHtml(u.username || 'N/A')}</b> <span class="text-muted font-sm">(${escapeHtml(u.first_name || '')})</span> ${wlBadge}</td>
+            <td><span class="badge ${u.role === 'ADMIN' ? 'badge-info' : 'badge-secondary'}">${u.role}</span></td>
+            <td><span class="badge ${u.status === 'ACTIVE' ? 'badge-success' : 'badge-danger'}">${u.status}</span></td>
+            <td><span class="font-mono">${u.total_jobs}</span> <span class="text-muted font-sm">(${u.successful_jobs} ok / ${u.failed_jobs} fail)</span></td>
+            <td class="font-sm">${formatDate(u.last_seen_at)}</td>
+            <td>
+              <div class="flex gap-1">
+                ${u.status === 'ACTIVE'
+                  ? `<button class="btn btn-danger btn-sm" onclick="setUserStatus(${u.id}, 'BANNED')">Ban</button>`
+                  : `<button class="btn btn-success btn-sm" onclick="setUserStatus(${u.id}, 'ACTIVE')">Unban</button>`}
+                ${wlBtn}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
     }
   } catch (err) {}
 }
 
 async function setUserStatus(id, st) {
   await API.post(`/api/users/${id}/status`, { status: st });
+  loadUsers();
+}
+
+async function loadUsersWhitelist() {
+  try {
+    const res = await API.get('/api/must-join/exempt-users');
+    const area = document.getElementById('users-whitelist-area');
+    if (area) area.value = res.exempt_users || '';
+    renderWhitelistTags(res.exempt_users || '');
+    await fetchWhitelistSet();
+  } catch (err) {
+    console.error('Failed to load whitelist:', err);
+  }
+}
+
+function renderWhitelistTags(rawText) {
+  const tagsContainer = document.getElementById('users-whitelist-tags');
+  if (!tagsContainer) return;
+  const items = rawText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  if (items.length === 0) {
+    tagsContainer.innerHTML = '<span class="text-secondary font-sm">No whitelisted users configured.</span>';
+    return;
+  }
+  tagsContainer.innerHTML = items.map(item => `
+    <span class="badge badge-info" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;">
+      <span>${escapeHtml(item)}</span>
+      <button type="button" onclick="removeWhitelistItem('${escapeHtml(item)}')" style="background:none;border:none;color:inherit;cursor:pointer;font-size:13px;line-height:1;opacity:0.75;padding:0 2px;" title="Remove">×</button>
+    </span>
+  `).join('');
+}
+
+async function saveUsersWhitelist() {
+  hideAlert('users-whitelist-alert');
+  const area = document.getElementById('users-whitelist-area');
+  const val = area ? area.value : '';
+  try {
+    await API.post('/api/must-join/exempt-users', { exempt_users: val });
+    showAlert('users-whitelist-alert', 'Must-Join whitelist saved successfully', 'success');
+    toastSuccess('Must-Join whitelist updated', 'Saved');
+    renderWhitelistTags(val);
+    await fetchWhitelistSet();
+  } catch (err) {
+    showAlert('users-whitelist-alert', `Failed to save: ${err.message}`, 'error');
+    toastError(`Failed to save: ${err.message}`, 'Save Error');
+  }
+}
+
+async function quickAddWhitelistUser() {
+  const input = document.getElementById('users-wl-quick-add');
+  if (!input) return;
+  const val = input.value.trim();
+  if (!val) return;
+  const area = document.getElementById('users-whitelist-area');
+  const current = area ? area.value.trim() : '';
+  const updated = current ? `${current}, ${val}` : val;
+  if (area) area.value = updated;
+  input.value = '';
+  await saveUsersWhitelist();
+}
+
+async function removeWhitelistItem(itemToRemove) {
+  const area = document.getElementById('users-whitelist-area');
+  if (!area) return;
+  const items = area.value.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const updatedItems = items.filter(it => it.toLowerCase() !== itemToRemove.toLowerCase());
+  area.value = updatedItems.join(', ');
+  await saveUsersWhitelist();
+}
+
+async function toggleUserWhitelist(id, username) {
+  await fetchWhitelistSet();
+  const isWl = isUserInWhitelist(id, username);
+  const identifier = username ? `@${username}` : String(id);
+  if (isWl) {
+    await removeWhitelistItem(String(id));
+    if (username) await removeWhitelistItem(`@${username}`);
+    toastSuccess(`Removed ${identifier} from Must-Join whitelist`);
+  } else {
+    const res = await API.get('/api/must-join/exempt-users');
+    const current = (res.exempt_users || '').trim();
+    const updated = current ? `${current}, ${identifier}` : identifier;
+    await API.post('/api/must-join/exempt-users', { exempt_users: updated });
+    toastSuccess(`Added ${identifier} to Must-Join whitelist`);
+  }
+  await fetchWhitelistSet();
   loadUsers();
 }
 
@@ -560,9 +725,10 @@ async function testAI() {
 // 10. SETTINGS
 async function loadSettings() {
   const data = await API.get('/api/settings');
-  document.getElementById('set-max-dur').value        = data.max_video_duration_seconds;
-  document.getElementById('set-allow-unknown').checked = data.allow_unknown_duration;
-  document.getElementById('set-cache-bypass').checked = data.cache_hit_bypasses_duration_limit;
+  const elLocal = document.getElementById('set-max-size-local');
+  const elCloud = document.getElementById('set-max-size-cloud');
+  if (elLocal) elLocal.value = data.max_video_file_size_mb_local ?? 1900;
+  if (elCloud) elCloud.value = data.max_video_file_size_mb_cloud ?? 48;
   document.getElementById('set-max-per-user').value   = data.max_concurrent_per_user;
   document.getElementById('set-max-queued').value     = data.max_queued_per_user;
   document.getElementById('set-max-temp').value       = data.max_temp_storage_gb;
@@ -573,9 +739,8 @@ async function saveGlobalSettings(e) {
   hideAlert('settings-alert');
   hideAlert('youtube-alert');
   const payload = {
-    max_video_duration_seconds:        parseInt(document.getElementById('set-max-dur').value, 10),
-    allow_unknown_duration:            document.getElementById('set-allow-unknown').checked,
-    cache_hit_bypasses_duration_limit: document.getElementById('set-cache-bypass').checked,
+    max_video_file_size_mb_local:      parseInt(document.getElementById('set-max-size-local')?.value || '1900', 10),
+    max_video_file_size_mb_cloud:      parseInt(document.getElementById('set-max-size-cloud')?.value || '48', 10),
     max_concurrent_per_user:           parseInt(document.getElementById('set-max-per-user').value, 10),
     max_queued_per_user:               parseInt(document.getElementById('set-max-queued').value, 10),
     max_temp_storage_gb:               parseInt(document.getElementById('set-max-temp').value, 10),
@@ -932,17 +1097,7 @@ async function resetMustJoinMessage() {
 }
 
 async function saveMustJoinExemptUsers() {
-  hideAlert('mj-exempt-alert');
-  const area = document.getElementById('mj-exempt-users-area');
-  const val = area ? area.value : '';
-  try {
-    await API.post('/api/must-join/exempt-users', { exempt_users: val });
-    showAlert('mj-exempt-alert', 'Must-Join exempt users saved', 'success');
-    toastSuccess('Exempt users updated', 'Saved');
-  } catch (err) {
-    showAlert('mj-exempt-alert', `Failed to save: ${err.message}`, 'error');
-    toastError(`Failed to save: ${err.message}`, 'Save Error');
-  }
+  await saveUsersWhitelist();
 }
 
 // =============================================================================

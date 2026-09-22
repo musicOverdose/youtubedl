@@ -3,40 +3,21 @@ from src.services.ytdlp_service import YtDlpService
 
 
 def test_duration_validation():
-    max_limit = 7200  # 02:00:00
-
-    # 1. Under limit: allowed
+    # Long videos and unknown durations are never rejected by duration limits (size limits govern)
     info_under = {"duration": 3600}
-    is_valid, dur, err = YtDlpService.validate_duration(info_under, max_limit, allow_unknown=False)
+    is_valid, dur, err = YtDlpService.validate_duration(info_under)
     assert is_valid is True
     assert dur == 3600
     assert err is None
 
-    # 2. Exact limit: allowed
-    info_exact = {"duration": 7200}
-    is_valid, dur, err = YtDlpService.validate_duration(info_exact, max_limit, allow_unknown=False)
+    info_over = {"duration": 108000}  # 30 hours long video
+    is_valid, dur, err = YtDlpService.validate_duration(info_over)
     assert is_valid is True
-    assert dur == 7200
+    assert dur == 108000
     assert err is None
 
-    # 3. Over limit: rejected with error text
-    info_over = {"duration": 10800}  # 03:00:00
-    is_valid, dur, err = YtDlpService.validate_duration(info_over, max_limit, allow_unknown=False)
-    assert is_valid is False
-    assert dur == 10800
-    assert "❌ This video is too long" in err
-    assert "02:00:00" in err
-    assert "03:00:00" in err
-
-    # 4. Unknown duration (None or 0)
     info_unknown = {"duration": None}
-    # When allow_unknown is False
-    is_valid, dur, err = YtDlpService.validate_duration(info_unknown, max_limit, allow_unknown=False)
-    assert is_valid is False
-    assert "Unknown video duration" in err
-
-    # When allow_unknown is True
-    is_valid, dur, err = YtDlpService.validate_duration(info_unknown, max_limit, allow_unknown=True)
+    is_valid, dur, err = YtDlpService.validate_duration(info_unknown)
     assert is_valid is True
     assert dur is None
     assert err is None

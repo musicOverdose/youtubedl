@@ -75,8 +75,11 @@ async def get_dashboard_stats(
             "failed": failed_count,
         },
         "settings": {
-            "max_duration_seconds": settings.MAX_VIDEO_DURATION_SECONDS,
-            "max_duration_formatted": YtDlpService.format_duration(settings.MAX_VIDEO_DURATION_SECONDS),
+            "max_video_file_size_mb_local": getattr(settings, "MAX_VIDEO_FILE_SIZE_MB_LOCAL", 1900),
+            "max_video_file_size_mb_cloud": getattr(settings, "MAX_VIDEO_FILE_SIZE_MB_CLOUD", 48),
+            "max_video_size_formatted": f"{getattr(settings, 'MAX_VIDEO_FILE_SIZE_MB_LOCAL', 1900)} MB",
+            "max_duration_seconds": getattr(settings, "MAX_VIDEO_DURATION_SECONDS", 7200),
+            "max_duration_formatted": YtDlpService.format_duration(getattr(settings, "MAX_VIDEO_DURATION_SECONDS", 7200)),
             "must_join_enabled": settings.MUST_JOIN_ENABLED,
             "required_channels_count": req_channels_count,
             "ai_enabled": settings.AI_ENABLED,

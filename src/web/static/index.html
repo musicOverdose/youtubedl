@@ -234,8 +234,8 @@
               <div class="card__title">Operational Status</div>
             </div>
             <div class="info-row">
-              <span class="info-row__key">Max Video Duration</span>
-              <span class="info-row__val bold" id="stat-max-dur">02:00:00</span>
+              <span class="info-row__key">Max Video Size Limit</span>
+              <span class="info-row__val bold" id="stat-max-size">1900 MB</span>
             </div>
             <div class="info-row">
               <span class="info-row__key">AI Translation</span>
@@ -438,14 +438,28 @@
         <div class="section-header">
           <div class="section-header__left">
             <div class="section-title">Telegram Users</div>
-            <div class="section-sub">Manage bot user access and permissions</div>
+            <div class="section-sub">Manage bot user access, ban controls, and Must-Join whitelist</div>
           </div>
-          <div class="section-actions">
+          <div class="section-actions" id="users-search-container">
             <input type="text" id="users-search" placeholder="Search username or ID…" onkeyup="loadUsers()" style="width:230px;" aria-label="Search users">
           </div>
         </div>
 
-        <div class="table-container">
+        <!-- Users View Navigation Buttons -->
+        <div class="flex gap-2 mb-4" id="users-tabs">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-users-tab-all" onclick="switchUsersTab('all')">
+            👥 All Users
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-users-tab-banned" onclick="switchUsersTab('banned')">
+            🚫 Banned Users <span class="badge badge-danger ml-1" id="badge-users-banned-count" style="display:none">0</span>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-users-tab-whitelist" onclick="switchUsersTab('whitelist')">
+            ⭐ Must-Join Whitelist <span class="badge badge-info ml-1" id="badge-users-whitelist-count" style="display:none">0</span>
+          </button>
+        </div>
+
+        <!-- View 1: Users Table (All or Banned) -->
+        <div id="users-view-table" class="table-container">
           <div class="table-scroll">
             <table>
               <thead>
@@ -456,11 +470,48 @@
                   <th>Status</th>
                   <th>Total Jobs</th>
                   <th>Last Active</th>
-                  <th>Action</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="tbody-users"></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- View 2: Must-Join Whitelist Section -->
+        <div id="users-view-whitelist" class="hidden">
+          <div class="card max-w-md">
+            <div class="card__header">
+              <div class="card__title">Must-Join User Whitelist (Exemptions)</div>
+            </div>
+            <div class="alert-strip hidden mb-3" id="users-whitelist-alert" role="alert"></div>
+            <p class="font-sm text-secondary mb-3">
+              Users on this whitelist completely bypass all Must-Join channel verification checks. Enter Telegram numeric User IDs (canonical identity) or @usernames, separated by commas or newlines.
+            </p>
+            <div class="form-group mb-3">
+              <label for="users-wl-quick-add">Quick Add Whitelist Entry:</label>
+              <div class="flex gap-2">
+                <input type="text" id="users-wl-quick-add" placeholder="Telegram ID (e.g. 123456789) or @username" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddWhitelistUser();}">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="quickAddWhitelistUser()">+ Add</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Currently Whitelisted Entries:</label>
+              <div id="users-whitelist-tags" class="flex flex-wrap gap-2 mb-2 p-2" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);min-height:42px;">
+                <span class="text-secondary font-sm">No whitelisted users yet.</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="users-whitelist-area">Whitelisted User IDs / Usernames (Bulk Edit):</label>
+              <textarea id="users-whitelist-area" placeholder="e.g. 123456789, @owner, 987654321" rows="4"></textarea>
+            </div>
+            <div class="flex gap-2">
+              <button type="button" class="btn btn-primary" onclick="saveUsersWhitelist()">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Save Whitelist
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="loadUsersWhitelist()">Reload</button>
+            </div>
           </div>
         </div>
       </section>
@@ -522,27 +573,6 @@
               Save Message
             </button>
             <button class="btn btn-secondary" onclick="resetMustJoinMessage()">Reset to Default</button>
-          </div>
-        </div>
-
-        <!-- Must-Join User Exemption Whitelist -->
-        <div class="card max-w-md">
-          <div class="card__header">
-            <div class="card__title">Exempt Users (Whitelist)</div>
-          </div>
-          <div class="alert-strip hidden mb-3" id="mj-exempt-alert" role="alert"></div>
-          <p class="font-sm text-secondary mb-3">
-            Users exempt from Must-Join channel checks. Enter numeric Telegram User IDs (canonical identity) or @usernames, separated by commas or newlines.
-          </p>
-          <div class="form-group">
-            <label for="mj-exempt-users-area">Exempt User IDs / Usernames:</label>
-            <textarea id="mj-exempt-users-area" placeholder="e.g. 123456789, @owner, 987654321" rows="4"></textarea>
-          </div>
-          <div class="flex gap-2">
-            <button class="btn btn-primary" onclick="saveMustJoinExemptUsers()">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-              Save Exemptions
-            </button>
           </div>
         </div>
       </section>
@@ -912,7 +942,7 @@
         <div class="section-header">
           <div class="section-header__left">
             <div class="section-title">Global Application Settings</div>
-            <div class="section-sub">Queue limits, duration controls and storage quotas</div>
+            <div class="section-sub">Queue limits, download size controls and storage quotas</div>
           </div>
         </div>
 
@@ -920,21 +950,14 @@
           <div class="alert-strip hidden mb-4" id="settings-alert" role="alert"></div>
           <form onsubmit="saveGlobalSettings(event)">
             <div class="form-group">
-              <label for="set-max-dur">Maximum Video Duration (seconds):</label>
-              <input type="number" id="set-max-dur" value="7200">
-              <div class="field-hint">7200 seconds = 02:00:00 (2 hours)</div>
+              <label for="set-max-size-local">Maximum Video File Size Limit (Local Bot API) (MB):</label>
+              <input type="number" id="set-max-size-local" value="1900" min="10" max="2000">
+              <div class="field-hint">Maximum allowed video download size in MB for Local Telegram Bot API (default: 1900 MB, max: 2000 MB)</div>
             </div>
             <div class="form-group">
-              <label class="inline">
-                <input type="checkbox" id="set-allow-unknown">
-                Allow Unknown Duration
-              </label>
-            </div>
-            <div class="form-group">
-              <label class="inline">
-                <input type="checkbox" id="set-cache-bypass" checked>
-                Cache Hit Bypasses Duration Limit
-              </label>
+              <label for="set-max-size-cloud">Maximum Video File Size Limit (Cloud Bot API) (MB):</label>
+              <input type="number" id="set-max-size-cloud" value="48" min="5" max="50">
+              <div class="field-hint">Maximum allowed video download size in MB for standard Cloud Bot API (default: 48 MB, max: 50 MB)</div>
             </div>
             <div class="form-group">
               <label for="set-max-per-user">Max Concurrent Jobs Per User:</label>

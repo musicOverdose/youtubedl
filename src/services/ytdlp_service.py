@@ -359,31 +359,15 @@ class YtDlpService:
 
     @classmethod
     def validate_duration(
-        cls, info: Dict[str, Any], max_duration_seconds: int, allow_unknown: bool
+        cls, info: Dict[str, Any], max_duration_seconds: int = 0, allow_unknown: bool = True
     ) -> Tuple[bool, Optional[int], Optional[str]]:
         """
-        Validates duration:
-        - If duration is None or <= 0: check allow_unknown.
-        - If duration > max_duration_seconds: rejected.
-        - If duration <= max_duration_seconds: accepted.
-        Returns: (is_valid, duration_seconds, error_reason)
+        Duration validation is retired in favor of pre-download file size limit.
+        Always returns is_valid=True so long videos are never rejected based on duration.
         """
         duration = info.get("duration")
-        if duration is None or duration <= 0:
-            if allow_unknown:
-                return True, None, None
-            return False, None, "Unknown video duration is not permitted."
-
-        if duration > max_duration_seconds:
-            max_formatted = cls.format_duration(max_duration_seconds)
-            actual_formatted = cls.format_duration(int(duration))
-            return (
-                False,
-                int(duration),
-                f"❌ This video is too long.\nMaximum allowed: {max_formatted}\nVideo duration: {actual_formatted}",
-            )
-
-        return True, int(duration), None
+        dur_int = int(duration) if duration is not None and duration > 0 else None
+        return True, dur_int, None
 
     @staticmethod
     def format_duration(seconds: int) -> str:

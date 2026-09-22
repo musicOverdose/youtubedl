@@ -23,6 +23,7 @@ class RoleRequest(BaseModel):
 @router.get("")
 async def list_users(
     search: Optional[str] = None,
+    status: Optional[str] = None,
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
@@ -36,7 +37,13 @@ async def list_users(
         query = query.where(f)
         count_query = count_query.where(f)
 
+    if status:
+        query = query.where(User.status == status)
+        count_query = count_query.where(User.status == status)
+
     total = await session.scalar(count_query) or 0
+    banned_count = await session.scalar(select(func.count(User.id)).where(User.status == UserStatus.BANNED.value)) or 0
+
     query = query.order_by(desc(User.last_seen_at)).offset(offset).limit(limit)
     res = await session.execute(query)
     users = res.scalars().all()
@@ -56,7 +63,7 @@ async def list_users(
             "last_seen_at": u.last_seen_at.isoformat() if u.last_seen_at else None,
         })
 
-    return {"total": total, "items": items, "limit": limit, "offset": offset}
+    return {"total": total, "banned_count": banned_count, "items": items, "limit": limit, "offset": offset}
 
 
 @router.post("/{user_id}/status")
